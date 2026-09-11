@@ -33,3 +33,8 @@ To control the collector:
 - Unraid does not record the client address in a webGUI session. The plugin takes it from the syslog sign-in line while the session is new. For a session that started before the plugin, the address is inferred or unknown.
 - A sign-in through a reverse proxy or a container shows the proxy address.
 - NFS v3 clients appear only as live TCP connections.
+
+## Support
+
+- Questions and help: the Unraid forum support thread, https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/
+- Bug reports: https://github.com/johnpwhite/unraid-plg-connections/issues

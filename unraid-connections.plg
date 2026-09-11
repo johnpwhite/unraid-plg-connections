@@ -1,9 +1,9 @@
 <?xml version='1.0' standalone='yes'?>
 
-<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.07" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connections/issues" icon="unraid-connections.png">
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.08" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/" icon="unraid-connections.png">
 
 <CHANGES>
-## 2026.09.11.07
+## 2026.09.11.08
 - New: Connected Clients. A Tools page shows who is connected to your server now (web UI, SSH, SMB, NFS v4, WireGuard and Tailscale), a 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins. A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
 </CHANGES>
 
@@ -11,7 +11,7 @@
 <ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
 
 <!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
-<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.07.tar.gz">
+<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.08.tar.gz">
 <URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
 </FILE>
 
@@ -20,7 +20,7 @@
 <INLINE>
 #!/bin/bash
 NAME="unraid-connections"
-VERSION="2026.09.11.07"
+VERSION="2026.09.11.08"
 CFG="/boot/config/plugins/$NAME"
 ARCHIVE="$CFG/src-$VERSION.tar.gz"
 STAGE=""
