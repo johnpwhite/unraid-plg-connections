@@ -1,6 +1,6 @@
 <?xml version='1.0' standalone='yes'?>
 
-<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.06" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connection/issues" icon="unraid-connections.png">
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.06" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connection/issues" icon="unraid-connections.png">
 
 <CHANGES>
 ## 2026.09.11.06
@@ -8,11 +8,11 @@
 </CHANGES>
 
 
-<ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
+<ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/src/unraid-connections.png</ICON>
 
 <!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
 <FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.06.tar.gz">
-<URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
+<URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/src.tar.gz</URL>
 </FILE>
 
 <!-- 2. INSTALL: run the install engine from the archive. The CI deploy stage runs the same engine. -->
