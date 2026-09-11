@@ -1,18 +1,18 @@
 <?xml version='1.0' standalone='yes'?>
 
-<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.06" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connection/issues" icon="unraid-connections.png">
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.07" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connections/issues" icon="unraid-connections.png">
 
 <CHANGES>
-## 2026.09.11.06
+## 2026.09.11.07
 - New: Connected Clients. A Tools page shows who is connected to your server now (web UI, SSH, SMB, NFS v4, WireGuard and Tailscale), a 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins. A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
 </CHANGES>
 
 
-<ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/src/unraid-connections.png</ICON>
+<ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
 
 <!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
-<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.06.tar.gz">
-<URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/src.tar.gz</URL>
+<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.07.tar.gz">
+<URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
 </FILE>
 
 <!-- 2. INSTALL: run the install engine from the archive. The CI deploy stage runs the same engine. -->
@@ -20,7 +20,7 @@
 <INLINE>
 #!/bin/bash
 NAME="unraid-connections"
-VERSION="2026.09.11.06"
+VERSION="2026.09.11.07"
 CFG="/boot/config/plugins/$NAME"
 ARCHIVE="$CFG/src-$VERSION.tar.gz"
 STAGE=""

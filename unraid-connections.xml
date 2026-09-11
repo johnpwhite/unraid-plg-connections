@@ -16,7 +16,7 @@
     - A 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins.
     - A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
   </Overview>
-  <Support>https://github.com/johnpwhite/unraid-plg-connection/issues</Support>
-  <Project>https://github.com/johnpwhite/unraid-plg-connection</Project>
-  <Icon>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connection/main/src/unraid-connections.png</Icon>
+  <Support>https://github.com/johnpwhite/unraid-plg-connections/issues</Support>
+  <Project>https://github.com/johnpwhite/unraid-plg-connections</Project>
+  <Icon>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</Icon>
 </Containers>
