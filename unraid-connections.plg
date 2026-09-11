@@ -1,0 +1,58 @@
+<?xml version='1.0' standalone='yes'?>
+
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.06" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://github.com/johnpwhite/unraid-plg-connection/issues" icon="unraid-connections.png">
+
+<CHANGES>
+## 2026.09.11.06
+- New: Connected Clients. A Tools page shows who is connected to your server now (web UI, SSH, SMB, NFS v4, WireGuard and Tailscale), a 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins. A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
+</CHANGES>
+
+
+<ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
+
+<!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
+<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.06.tar.gz">
+<URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
+</FILE>
+
+<!-- 2. INSTALL: run the install engine from the archive. The CI deploy stage runs the same engine. -->
+<FILE Run="/bin/bash" Name="/tmp/unraid-connections-installer">
+<INLINE>
+#!/bin/bash
+NAME="unraid-connections"
+VERSION="2026.09.11.06"
+CFG="/boot/config/plugins/$NAME"
+ARCHIVE="$CFG/src-$VERSION.tar.gz"
+STAGE=""
+cleanup_install() { rm -f /tmp/unraid-connections-installer; [ -n "$STAGE" ] &amp;&amp; rm -rf "$STAGE"; }
+trap cleanup_install EXIT
+
+echo "--- INSTALL START ---"
+if [ ! -f "$ARCHIVE" ]; then
+  echo "FATAL: the source archive is not at $ARCHIVE. The download step did not complete."
+  exit 1
+fi
+STAGE=$(mktemp -d)
+if ! tar -xzf "$ARCHIVE" -C "$STAGE" src/scripts/installer/install-engine.sh 2&gt;/dev/null; then
+  echo "FATAL: the install engine is missing from $ARCHIVE. The existing installation was not changed."
+  exit 1
+fi
+NAME="$NAME" VERSION="$VERSION" EMHTTP_DEST="/usr/local/emhttp/plugins/$NAME" CONFIG_DIR="$CFG" ARCHIVE="$ARCHIVE" \
+  bash "$STAGE/src/scripts/installer/install-engine.sh" || exit 1
+echo "--- INSTALL COMPLETE ---"
+</INLINE>
+</FILE>
+
+<!-- 3. REMOVE: stop the collector and remove the RAM files. Settings on flash stay (Unraid convention). -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+#!/bin/bash
+NAME="unraid-connections"
+DEST="/usr/local/emhttp/plugins/$NAME"
+if [ -x "$DEST/scripts/rc.$NAME" ]; then "$DEST/scripts/rc.$NAME" stop; fi
+rm -rf "$DEST" "/tmp/$NAME"
+echo "$NAME removed. /boot/config/plugins/$NAME was kept."
+</INLINE>
+</FILE>
+
+</PLUGIN>

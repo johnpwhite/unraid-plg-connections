@@ -1,0 +1,58 @@
+#!/bin/bash
+# rc.unraid-connections - start, stop or check the Connected Clients collector.
+# Usage: rc.unraid-connections start|stop|restart|status
+NAME="unraid-connections"
+DAEMON="/usr/local/emhttp/plugins/$NAME/scripts/collector.php"
+RUN="/tmp/$NAME"
+PIDFILE="$RUN/collector.pid"
+
+running() {
+  [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+}
+
+case "$1" in
+  start)
+    if running; then
+      echo "Collector is already running (PID $(cat "$PIDFILE"))."
+      exit 0
+    fi
+    mkdir -p "$RUN"
+    chmod 700 "$RUN"
+    # Detach fully: the plugin manager streams install output through nginx.
+    setsid /usr/bin/php -q "$DAEMON" >>"$RUN/collector.log" 2>&1 </dev/null &
+    sleep 1
+    if running; then
+      echo "Collector started (PID $(cat "$PIDFILE"))."
+    else
+      echo "Collector did not start. See $RUN/collector.log."
+      exit 1
+    fi
+    ;;
+  stop)
+    if running; then
+      kill "$(cat "$PIDFILE")"
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        running || break
+        sleep 0.2
+      done
+    fi
+    rm -f "$PIDFILE"
+    echo "Collector stopped."
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    ;;
+  status)
+    if running; then
+      echo "Collector is running (PID $(cat "$PIDFILE"))."
+    else
+      echo "Collector is stopped."
+      exit 3
+    fi
+    ;;
+  *)
+    echo "Usage: $0 start|stop|restart|status"
+    exit 2
+    ;;
+esac

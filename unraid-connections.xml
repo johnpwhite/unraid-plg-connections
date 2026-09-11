@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Containers>
+  <PluginURL>https://github.com/johnpwhite/unraid-plg-connections/raw/main/unraid-connections.plg</PluginURL>
+  <PluginAuthor>John White</PluginAuthor>
+  <Beta>True</Beta>
+  <MinVer>7.2.0</MinVer>
+  <Category>Tools:System</Category>
+  <Name>Connected Clients</Name>
+  <Description>See who is connected to your Unraid server: web UI, SSH, SMB, NFS and VPN sessions, with a timeline and sign-in events.</Description>
+  <Overview>
+    Connected Clients adds a page at Tools, Connected Clients. It shows who is connected to your server now, and who was connected in the last three days.
+
+    [b]Features:[/b]
+    - Web UI sessions with the client address, the connection path (LAN, Tailscale, WireGuard) and the last request.
+    - SSH, SMB and NFS v4 sessions, and active WireGuard and Tailscale peers.
+    - A 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins.
+    - A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
+  </Overview>
+  <Support>https://github.com/johnpwhite/unraid-plg-connection/issues</Support>
+  <Project>https://github.com/johnpwhite/unraid-plg-connection</Project>
+  <Icon>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</Icon>
+</Containers>

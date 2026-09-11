@@ -1,0 +1,72 @@
+Menu="UNRAID-OS"
+Title="Connected Clients"
+Icon="plug"
+Tag="plug"
+Markdown="false"
+---
+<?php
+/**
+ * <module_context>
+ *   <name>ConnectedClients</name>
+ *   <description>Tools page: who is connected to this server now (web UI, SSH, SMB, NFS,
+ *   VPN), a timeline and the sign-in events. The page shell is static; assets/cc-view.js
+ *   polls state.php every 5 seconds and renders the data.</description>
+ *   <dependencies>assets/cc.css, assets/cc-model.js, assets/cc-view.js, state.php</dependencies>
+ * </module_context>
+ */
+$ccBase = '/plugins/unraid-connections';
+$ccDir = '/usr/local/emhttp/plugins/unraid-connections';
+$ccV = static fn(string $f): int => @filemtime("$ccDir/$f") ?: time();
+$ccDark = in_array($display['theme'] ?? 'white', ['black', 'gray'], true);
+?>
+<link rel="stylesheet" href="<?= $ccBase ?>/assets/cc.css?v=<?= $ccV('assets/cc.css') ?>">
+<div class="cc-root<?= $ccDark ? ' cc-dark' : '' ?>" id="cc-root">
+  <div class="cc-top">
+    <div class="cc-id">
+      <p class="cc-eyebrow" id="cc-eyebrow">Reading the collector data…</p>
+      <p class="cc-live" id="cc-live"></p>
+    </div>
+    <div class="cc-controls" role="group" aria-label="View options">
+      <div class="cc-ctl"><span class="cc-ctl-l" id="cc-l-win">Window</span>
+        <div class="cc-seg" role="group" aria-labelledby="cc-l-win"><button type="button" data-pref="win" data-val="24">24 h</button><button type="button" data-pref="win" data-val="72">72 h</button></div></div>
+      <div class="cc-ctl"><span class="cc-ctl-l" id="cc-l-group">Group “right now” by</span>
+        <div class="cc-seg" role="group" aria-labelledby="cc-l-group"><button type="button" data-pref="group" data-val="client">Client</button><button type="button" data-pref="group" data-val="protocol">Protocol</button></div></div>
+      <div class="cc-ctl"><span class="cc-ctl-l">Show</span>
+        <div class="cc-sw-row">
+          <label class="cc-switch" title="Connections from this server itself and from its Docker containers"><input type="checkbox" data-pref="local"><span class="cc-knob" aria-hidden="true"></span>Local traffic</label>
+          <label class="cc-switch" title="Session files whose last request is older than 30 minutes"><input type="checkbox" data-pref="stale"><span class="cc-knob" aria-hidden="true"></span>Stale sessions</label>
+        </div></div>
+    </div>
+  </div>
+  <div class="cc-banner" id="cc-banner" role="status" hidden></div>
+  <section class="cc-strip" id="cc-strip" aria-label="Sessions by protocol"></section>
+  <div class="cc-main">
+    <div class="cc-col">
+      <section class="cc-panel" aria-labelledby="cc-h-now">
+        <div class="cc-sec-h"><h2 id="cc-h-now">Right now</h2><span class="cc-sec-m" id="cc-now-meta"></span></div>
+        <div id="cc-roster"></div>
+        <div class="cc-hidden-note" id="cc-hidden-note" hidden></div>
+      </section>
+      <section class="cc-panel" aria-labelledby="cc-h-tl">
+        <div class="cc-sec-h"><h2 id="cc-h-tl">Last 72 hours</h2><div class="cc-legend" id="cc-legend"></div></div>
+        <div class="cc-tl-scroll"><div class="cc-tl" id="cc-timeline"></div></div>
+      </section>
+      <section class="cc-panel" aria-labelledby="cc-h-ev">
+        <div class="cc-sec-h"><h2 id="cc-h-ev">Sign-in events</h2>
+          <div class="cc-seg" role="group" aria-label="Filter events"><button type="button" data-pref="ev" data-val="all">All<small id="cc-n-all"></small></button><button type="button" data-pref="ev" data-val="web">Web UI<small id="cc-n-web"></small></button><button type="button" data-pref="ev" data-val="ssh">SSH<small id="cc-n-ssh"></small></button><button type="button" data-pref="ev" data-val="failed">Failed<small id="cc-n-failed"></small></button></div></div>
+        <div class="cc-ev-scroll"><table class="cc-ev" id="cc-events"></table></div>
+        <div class="cc-ev-foot"><span id="cc-ev-count"></span><button type="button" class="cc-linkbtn" id="cc-ev-more" hidden></button></div>
+      </section>
+    </div>
+    <aside class="cc-side">
+      <section aria-labelledby="cc-h-src">
+        <div class="cc-sec-h"><h2 id="cc-h-src">Sources read</h2></div>
+        <ul class="cc-src" id="cc-sources"></ul>
+        <ul class="cc-caveats" id="cc-caveats"></ul>
+      </section>
+    </aside>
+  </div>
+  <div class="cc-tip" id="cc-tip" role="tooltip" hidden></div>
+</div>
+<script src="<?= $ccBase ?>/assets/cc-model.js?v=<?= $ccV('assets/cc-model.js') ?>"></script>
+<script src="<?= $ccBase ?>/assets/cc-view.js?v=<?= $ccV('assets/cc-view.js') ?>"></script>
