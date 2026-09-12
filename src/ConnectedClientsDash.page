@@ -1,0 +1,57 @@
+Menu="Dashboard:0"
+Nchan="connections_dash"
+---
+<?php
+/**
+ * <module_context>
+ *   <name>ConnectedClientsDash</name>
+ *   <description>Dashboard tile (docs/specs/DASHBOARD_TILE.md): sessions in use now for each
+ *   protocol, the clients with the most sessions, and failed sign-ins in 24 hours. The PHP
+ *   side gives the first summary; assets/cc-dash.js renders it and takes updates from the
+ *   nchan channel connections_dash (script nchan/connections_dash), or reads summary.php when
+ *   nchan is silent. An error here adds no tile and never breaks the Dashboard.</description>
+ *   <dependencies>include/cc-summary.php, assets/cc-dash.js, assets/cc-dash.css</dependencies>
+ * </module_context>
+ */
+$ccObLevel = ob_get_level();
+try {
+    $ccDir = '/usr/local/emhttp/plugins/unraid-connections';
+    require_once "$ccDir/include/cc-summary.php";
+    $ccV = static fn(string $f): int => @filemtime("$ccDir/$f") ?: time();
+    $ccRaw = @file_get_contents('/tmp/unraid-connections/state.json');
+    $ccSnap = is_string($ccRaw) ? json_decode($ccRaw, true) : null;
+    $ccSum = is_array($ccSnap) ? cc_summary($ccSnap) : ['error' => 'collector_not_running'];
+    $ccVer = @parse_ini_file('/etc/unraid-version');
+    $ccResp = version_compare((string) (is_array($ccVer) ? ($ccVer['version'] ?? '0') : '0'), '7.2.0-beta', '>=');
+    ob_start();
+?>
+<tbody title="Connected Clients">
+  <tr><td>
+    <span class="tile-header">
+      <span class="tile-header-left">
+        <img src="/plugins/unraid-connections/unraid-connections.png" class="f32" style="width:32px;height:32px;margin-right:10px" alt="">
+        <div class="section">
+          <?php if ($ccResp): ?><h3 class="tile-header-main">CONNECTED CLIENTS</h3><?php else: ?>Connected Clients<br><?php endif; ?>
+          <span class="subtitle" id="cc-dash-sub">Reading the collector data…</span>
+        </div>
+      </span>
+      <span class="tile-header-right"><span class="tile-header-right-controls">
+        <a href="/Dashboard/Tools/ConnectedClients" title="Open Connected Clients"><i class="fa fa-fw fa-external-link control"></i></a>
+        <a href="/Dashboard/Settings/ConnectedClientsSettings" title="Connected Clients settings"><i class="fa fa-fw fa-cog control"></i></a>
+      </span></span>
+    </span>
+  </td></tr>
+  <tr><td>
+    <link rel="stylesheet" href="/plugins/unraid-connections/assets/cc-dash.css?v=<?= $ccV('assets/cc-dash.css') ?>">
+    <div class="cc-dash" id="cc-dash" data-initial="<?= htmlspecialchars((string) json_encode($ccSum, JSON_UNESCAPED_SLASHES), ENT_QUOTES) ?>"></div>
+    <script src="/plugins/unraid-connections/assets/cc-dash.js?v=<?= $ccV('assets/cc-dash.js') ?>"></script>
+  </td></tr>
+</tbody>
+<?php
+    $mytiles['unraid-connections']['column2'] = ob_get_clean();
+} catch (Throwable $e) {
+    while (ob_get_level() > $ccObLevel) {
+        ob_end_clean();
+    }
+}
+?>

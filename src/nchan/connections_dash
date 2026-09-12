@@ -1,0 +1,34 @@
+#!/usr/bin/php -q
+<?php
+/**
+ * <module_context>
+ *   <name>connections_dash</name>
+ *   <description>nchan script for the Connected Clients dashboard tile
+ *   (docs/specs/DASHBOARD_TILE.md). The webGUI starts it when the Dashboard opens (tile page
+ *   header Nchan="connections_dash"). It publishes cc_summary() of state.json to the channel
+ *   "connections_dash" each time the collector writes it. publish_noDupe() ends the script
+ *   about 30 to 60 s after the last Dashboard closes. It also ends when this file is gone.</description>
+ *   <dependencies>webGui/include/publish.php, ../include/cc-summary.php</dependencies>
+ * </module_context>
+ */
+
+declare(strict_types=1);
+
+$docroot = $docroot ?? (($_SERVER['DOCUMENT_ROOT'] ?? '') ?: '/usr/local/emhttp');
+require_once "$docroot/webGui/include/publish.php";
+require_once dirname(__DIR__) . '/include/cc-summary.php';
+
+$state = '/tmp/unraid-connections/state.json';
+$mtime = -1;
+$msg = '';
+while (is_file(__FILE__)) {
+    clearstatcache(true, $state);
+    $m = (int) @filemtime($state);
+    if ($m !== $mtime || $msg === '') {
+        $mtime = $m;
+        $snap = $m > 0 ? json_decode((string) @file_get_contents($state), true) : null;
+        $msg = (string) json_encode(is_array($snap) ? cc_summary($snap) : ['error' => 'collector_not_running'], JSON_UNESCAPED_SLASHES);
+    }
+    publish_noDupe('connections_dash', $msg, true);   // no subscriber for 30 s: the script exits
+    sleep(1);
+}

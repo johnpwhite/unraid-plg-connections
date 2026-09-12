@@ -21,7 +21,8 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const plural = (n, w, ws) => `${n} ${n === 1 ? w : (ws || w + 's')}`;
 
-  function create(D) {
+  function create(D, opts) {
+    const ownTag = (opts && opts.ownTag) || null;   // the viewer's own web session (ACTIONS.md)
     const TZ = (D.host && D.host.tz) || undefined;
     const NOW = D.generated_at;
     const tzOpt = TZ ? { timeZone: TZ } : {};
@@ -60,10 +61,12 @@
     const cname = (ip) => {
       if (!ip) return 'Unknown client';
       const c = info(ip);
+      if (c.label) return c.label;   // a user label wins (CLIENT_IDENTITY.md)
       if (c.kind === 'self') return (D.host.name || 'Server') + ' (this server)';
       if (c.kind === 'docker') return c.container || 'Docker container';
       return c.name ? c.name.replace(/\.(localdomain|local|lan|home\.arpa)$/i, '') : ip;
     };
+    const dnsName = (ip) => { const c = info(ip); return c.name ? c.name.replace(/\.(localdomain|local|lan|home\.arpa)$/i, '') : ''; };
     const isLocal = (ip) => ['self', 'docker', 'loopback'].includes(info(ip).kind);
     const kindTitle = (c) => ({ lan: 'Private LAN address', self: 'This Unraid server', tailscale: 'Tailscale address',
       public: 'Public internet address. Check this client.', loopback: 'Loopback',
@@ -94,6 +97,12 @@
     for (const r of (D.tailscale && D.tailscale.peers) || []) {
       if (r.active) S.push({ proto: 'vpn', ip: r.ips[0], state: 'active', start: null, unsure: true, end: null, raw: Object.assign({ kind: 'ts' }, r) });
     }
+    // Ended sessions from the history database (docs/specs/HISTORY.md): the timeline survives a reboot.
+    for (const h of (D.history && D.history.ended) || []) {
+      const raw = Object.assign({}, h.raw || {}, { state: 'ended' });
+      if (h.proto === 'vpn' && !raw.kind) raw.kind = String(h.skey).startsWith('ts:') ? 'ts' : 'wg';
+      S.push({ proto: h.proto, ip: h.ip, state: 'ended', start: h.start, unsure: false, end: h.end, raw, fromHistory: true });
+    }
     const clientName = (s) => (s.raw && s.raw.kind === 'ts' ? s.raw.name : cname(s.ip));
 
     const smbDialect = (d) => { const m = /^SMB(\d)_(\d)(\d)$/.exec(d || ''); if (!m) return d || '?'; return m[3] === '0' ? `${m[1]}.${m[2]}` : `${m[1]}.${m[2]}.${m[3]}`; };
@@ -105,7 +114,9 @@
         bits.push(`last request ${ago(r.last_request)}`, `session ${r.tag}`);
         if (r.match === 'inferred') chips.push(['IP inferred', 'The collector did not see this session when it was new. It matched the only session in use to the only live client.']);
         if (r.match === 'ambiguous') chips.push(['IP ambiguous', 'Two sign-ins for this user in the same second.']);
+        if (r.match === 'ambiguous' && Array.isArray(r.candidates)) bits.push(`candidates ${r.candidates.join(', ')}`);
         if (r.match === 'none') chips.push(['IP unknown', 'No syslog sign-in line matched this session.']);
+        if (ownTag && r.tag === ownTag) chips.push(['This browser', 'You use this session now.']);
       } else if (s.proto === 'ssh') {
         bits.push(r.user || 'user unknown');
         if (r.method) bits.push(`${r.method}${r.key_type ? ' ' + r.key_type : ''}${r.key ? ' ' + r.key + '…' : ''}`);
@@ -125,13 +136,33 @@
       return { bits, chips };
     }
     const since = (s) => {
-      if (s.proto === 'nfs' || s.start == null) return { text: 'start not recorded', sub: '' };
+      if (s.start == null || (s.proto === 'nfs' && !s.fromHistory)) return { text: 'start not recorded', sub: '' };
       const pre = s.proto === 'web' ? 'signed in ' : s.proto === 'smb' ? 'since ~' : 'started ';
       return { text: pre + dayhm(s.start), sub: dur((s.end ?? NOW) - s.start) };
     };
+    // Actions (docs/specs/ACTIONS.md): the button for a session, or null. The server checks each request again.
+    const ACT = {
+      web: ['web_logout', 'Sign out', 'The browser must sign in again.'],
+      ssh: ['ssh_end', 'End', 'The SSH connection closes. Unsaved work in that session is lost.'],
+      smb: ['smb_close', 'Close', 'Files open on the client can lose data. The client can connect again.'],
+    };
+    const actionFor = (s) => {
+      const a = ACT[s.proto];
+      if (!a || s.fromHistory || (D.config || {}).actions === 'no') return null;
+      const r = s.raw || {}, who = `${r.user || '?'} from ${s.ip || 'an unknown address'}`;
+      let target, what;
+      if (s.proto === 'web') {
+        if (!['active', 'idle', 'stale'].includes(s.state) || !r.tag || r.tag === ownTag) return null;
+        target = r.tag; what = `web UI session ${r.tag} of ${who}`;
+      } else {
+        if (!r.pid || (s.proto === 'ssh' && s.state !== 'active')) return null;
+        target = String(r.pid); what = `${PROTO[s.proto].name} session of ${who} (PID ${r.pid})`;
+      }
+      return { act: a[0], label: a[1], warn: a[2], target, what };
+    };
     const countByProto = (list) => ORDER.map((p) => { const n = list.filter((s) => s.proto === p).length; return n ? plural(n, `${PROTO[p].name} session`) : ''; }).filter(Boolean).join(', ');
 
-    return { D, NOW, zone, S, parts, hm, hms, dayLabel, dayhm, dur, info, cname, isLocal, kindTitle, clientName, describe, since, countByProto };
+    return { D, NOW, zone, S, sources: D.sources || {}, config: D.config || {}, dnsName, parts, hm, hms, dayLabel, dayhm, dur, info, cname, isLocal, kindTitle, clientName, describe, since, countByProto, actionFor, ownTag };
   }
 
   window.CCModel = { create, PROTO, ORDER, KIND, STATE, RANK, esc, plural };

@@ -1,8 +1,19 @@
 <?xml version='1.0' standalone='yes'?>
 
-<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.08" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/" icon="unraid-connections.png">
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.14" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/" icon="unraid-connections.png">
 
 <CHANGES>
+## 2026.09.11.14
+- Feat: a settings page at Settings, User Utilities, Connected Clients. Turn each protocol on or off, set the poll interval and the idle limit, name your proxy ranges, and give your clients your own labels.
+- Feat: 30 days of history that stays after a reboot. The page lists the sign-in events of the whole period, the timeline keeps ended sessions, and each client has a History button.
+- Feat: a Dashboard tile. It shows the sessions in use now for each protocol, the busiest clients and the failed sign-ins of the last 24 hours.
+- Feat: notifications for a new client, many failed sign-ins from one address (default 5 in 10 minutes) and an SSH sign-in from the internet. They go out as Unraid notifications. You turn each kind on or off, and you can send a test notification.
+- Feat: actions, each with a confirmation. Sign out a web UI session, end an SSH session or close an SMB session from the page. The plugin never signs out your own session, and it writes each action to syslog. A setting hides the buttons.
+- Improve: the page now updates live through nchan, the webGUI push channel. It reads the data from the server only when nchan is silent.
+- Improve: a banner names any source that fails, and a sign-in through a proxy or a container is marked.
+- Improve: a diagnostics script for a support post: bash /usr/local/emhttp/plugins/unraid-connections/scripts/diagnostics.sh
+- Fix: the page no longer takes the warning style of the webGUI.
+- Fix: an SMB share now shows once when two clients use it.
 ## 2026.09.11.08
 - New: Connected Clients. A Tools page shows who is connected to your server now (web UI, SSH, SMB, NFS v4, WireGuard and Tailscale), a 24-hour or 72-hour timeline, and the sign-in events, including failed sign-ins. A small collector reads these sources every 5 seconds. It only reads; it changes nothing on the server.
 </CHANGES>
@@ -11,8 +22,9 @@
 <ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
 
 <!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
-<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.08.tar.gz">
+<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.14.tar.gz">
 <URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
+<SHA256>068ec708ac34486e57ff588c7dd001be1d6e419408fa7bca3e58961034ef6024</SHA256>
 </FILE>
 
 <!-- 2. INSTALL: run the install engine from the archive. The CI deploy stage runs the same engine. -->
@@ -20,7 +32,7 @@
 <INLINE>
 #!/bin/bash
 NAME="unraid-connections"
-VERSION="2026.09.11.08"
+VERSION="2026.09.11.14"
 CFG="/boot/config/plugins/$NAME"
 ARCHIVE="$CFG/src-$VERSION.tar.gz"
 STAGE=""
@@ -50,8 +62,14 @@ echo "--- INSTALL COMPLETE ---"
 NAME="unraid-connections"
 DEST="/usr/local/emhttp/plugins/$NAME"
 if [ -x "$DEST/scripts/rc.$NAME" ]; then "$DEST/scripts/rc.$NAME" stop; fi
-rm -rf "$DEST" "/tmp/$NAME"
-echo "$NAME removed. /boot/config/plugins/$NAME was kept."
+pkill -f "$DEST/nchan/" &gt;/dev/null 2&gt;&amp;1
+if [ -f /var/run/nchan.pid ]; then sed -i "\#plugins/$NAME/nchan/#d" /var/run/nchan.pid; fi
+if [ -f /etc/rsyslog.d/40-unraid-connections.conf ]; then
+  rm -f /etc/rsyslog.d/40-unraid-connections.conf
+  /etc/rc.d/rc.rsyslogd restart &gt;/dev/null 2&gt;&amp;1
+fi
+rm -rf "$DEST" "/tmp/$NAME" /var/log/unraid-connections
+echo "$NAME removed. /boot/config/plugins/$NAME (settings and history) was kept."
 </INLINE>
 </FILE>
 

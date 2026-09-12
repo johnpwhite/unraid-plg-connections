@@ -1,0 +1,89 @@
+Menu="Utilities"
+Title="Connected Clients"
+Icon="unraid-connections.png"
+Markdown="false"
+---
+<?php
+/**
+ * <module_context>
+ *   <name>ConnectedClientsSettings</name>
+ *   <description>Settings page (Settings → User Utilities → Connected Clients). The form
+ *   posts to itself; local_prepend.php checks the csrf_token field. The collector reloads
+ *   settings.ini when it changes, so a save needs no restart. A second button sends a test
+ *   notification and saves nothing. docs/specs/SETTINGS.md, docs/specs/NOTIFICATIONS.md.</description>
+ *   <dependencies>include/cc-config.php, include/cc-notify.php</dependencies>
+ * </module_context>
+ */
+require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-config.php';
+require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-notify.php';
+
+$ccSaved = null;
+$ccTested = null;
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['cc_test_notify'])) {
+    $ccTested = cc_notify_send(['subject' => 'Test from Connected Clients', 'description' => 'Notifications from Connected Clients work.', 'importance' => 'normal']);
+} elseif (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['cc_save'])) {
+    $ccSaved = cc_config_write(cc_settings_from_post($_POST));
+}
+$cc = cc_config_read();
+$ccE = static fn($v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+$ccOn = static fn(string $k): string => ($cc[$k] ?? 'yes') === 'yes' ? 'checked' : '';
+?>
+<style>
+.cc-settings textarea{width:100%;max-width:520px;font-family:ui-monospace,Menlo,Consolas,monospace}
+/* a phone (375 px) has no room for a fixed 360 px field or a long label on one line */
+.cc-settings .cc-wide{width:100%;max-width:360px;box-sizing:border-box}   /* a fixed width sizes the dd itself, so max-width:100% cannot shrink it */
+.cc-settings dt{white-space:normal}
+.cc-settings .cc-adapters label{margin-right:18px;white-space:nowrap}
+.cc-settings .cc-msg-ok{color:#0ca30c;font-weight:bold;margin-left:10px}
+.cc-settings .cc-msg-err{color:#d03b3b;font-weight:bold;margin-left:10px}
+</style>
+<form method="post" class="cc-settings" id="cc-settings-form">
+<input type="hidden" name="csrf_token" value="<?= $ccE($var['csrf_token'] ?? '') ?>">
+<input type="hidden" name="cc_save" value="1">
+
+<dl><dt>Protocols:</dt><dd class="cc-adapters">
+<?php foreach (['web' => 'Web UI', 'ssh' => 'SSH', 'smb' => 'SMB', 'nfs' => 'NFS', 'vpn' => 'VPN (WireGuard, Tailscale)'] as $ccKey => $ccName): ?>
+  <label><input type="checkbox" name="adapter_<?= $ccKey ?>" value="yes" <?= $ccOn("adapter_$ccKey") ?>> <?= $ccE($ccName) ?></label>
+<?php endforeach; ?>
+</dd></dl>
+<blockquote class="inline_help">Untick a protocol to stop reading it. The page then shows it as "turned off in settings".</blockquote>
+
+<dl><dt>Poll interval (seconds):</dt><dd><input type="number" name="poll_interval" min="2" max="5" value="<?= $ccE($cc['poll_interval']) ?>"></dd></dl>
+<blockquote class="inline_help">How often the collector reads the sources: 2 to 5 seconds. It must stay at 5 seconds or less, so that each new web session gets its client address before Unraid moves its login time.</blockquote>
+
+<dl><dt>Idle limit (minutes):</dt><dd><input type="number" name="idle_limit" min="5" max="1440" value="<?= $ccE($cc['idle_limit']) ?>"></dd></dl>
+<blockquote class="inline_help">A web session with no request for this long changes from Idle to Stale.</blockquote>
+
+<dl><dt>History (days):</dt><dd><input type="number" name="history_days" min="1" max="365" value="<?= $ccE($cc['history_days']) ?>"></dd></dl>
+<blockquote class="inline_help">How long the plugin keeps sessions and sign-in events.</blockquote>
+
+<dl><dt>Proxy ranges:</dt><dd><input type="text" name="proxy_ranges" class="cc-wide" value="<?= $ccE($cc['proxy_ranges']) ?>"></dd></dl>
+<blockquote class="inline_help">Addresses in these ranges (CIDR, separated by spaces) are marked "Via proxy": the real client is behind them. The default covers Docker bridge networks.</blockquote>
+
+<dl><dt>Client labels:</dt><dd><textarea name="labels" rows="6" placeholder="192.168.1.20=Living room TV&#10;aa:bb:cc:dd:ee:ff=Backup NAS"><?= $ccE(cc_labels_to_text($cc['labels'])) ?></textarea></dd></dl>
+<blockquote class="inline_help">One label on each line: an IP or MAC address, "=", and a name. A label replaces the host name on the Connected Clients page.</blockquote>
+
+<dl><dt>Actions:</dt><dd><label><input type="checkbox" name="actions" value="yes" <?= $ccOn('actions') ?>> Show the buttons that sign out a web UI session, end an SSH session and close an SMB session</label></dd></dl>
+<blockquote class="inline_help">Each action asks for a confirmation first. The plugin never signs out your own session. An SMB client can connect again after a close.</blockquote>
+
+<dl><dt>Notifications:</dt><dd class="cc-adapters">
+<?php foreach (['notify_new_client' => 'New client', 'notify_failed' => 'Failed sign-ins', 'notify_ssh_public' => 'SSH from the internet'] as $ccKey => $ccName): ?>
+  <label><input type="checkbox" name="<?= $ccKey ?>" value="yes" <?= $ccOn($ccKey) ?>> <?= $ccE($ccName) ?></label>
+<?php endforeach; ?>
+</dd></dl>
+<blockquote class="inline_help">The plugin sends these alerts as Unraid notifications. Settings → Notifications decides where they go (browser, email, other agents). New client: the first connection from an address in the history period. Failed sign-ins: the limit below. SSH from the internet: an SSH sign-in from a public address.</blockquote>
+
+<dl><dt>Failed sign-in limit:</dt><dd><input type="number" name="notify_failed_count" min="2" max="100" value="<?= $ccE($cc['notify_failed_count']) ?>"></dd></dl>
+<dl><dt>Failed sign-in window (minutes):</dt><dd><input type="number" name="notify_failed_window" min="1" max="1440" value="<?= $ccE($cc['notify_failed_window']) ?>"></dd></dl>
+<blockquote class="inline_help">One alert for each address that has this many failed sign-ins (web UI and SSH together) in the window. The same address gets a new alert only after the window.</blockquote>
+
+<dl><dt>&nbsp;</dt><dd>
+  <input type="submit" value="Apply"><input type="button" value="Done" onclick="done()">
+  <input type="submit" name="cc_test_notify" value="Send a test notification">
+  <?php if ($ccTested === true): ?><span class="cc-msg-ok" id="cc-test-sent">A test notification was sent.</span><?php endif; ?>
+  <?php if ($ccTested === false): ?><span class="cc-msg-err" id="cc-test-failed">Unraid's notify script is missing, so no notification was sent.</span><?php endif; ?>
+  <?php if ($ccSaved === true): ?><span class="cc-msg-ok" id="cc-saved">Saved. The collector uses the new settings within a few seconds.</span><?php endif; ?>
+  <?php if ($ccSaved === false): ?><span class="cc-msg-err" id="cc-save-failed">The settings could not be saved. Try again.</span><?php endif; ?>
+  <a href="/Tools/ConnectedClients" style="margin-left:14px">Open Connected Clients</a>
+</dd></dl>
+</form>

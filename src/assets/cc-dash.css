@@ -1,0 +1,25 @@
+/* cc-dash.css — Connected Clients dashboard tile (docs/specs/DASHBOARD_TILE.md).
+   Every rule is under .cc-dash. Text colours come from the webGUI theme; the protocol
+   colours are the same as on the page (cc.css). */
+.cc-dash{--d-web:#2a78d6;--d-ssh:#eb6834;--d-smb:#1baf7a;--d-nfs:#eda100;--d-vpn:#e87ba4;--d-warn:#e57373;padding:0 8px 4px}
+.cc-dash .cc-d-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin:5px 0 8px}
+.cc-dash .cc-d-cell{background:rgba(0,0,0,.1);border-radius:4px;padding:6px 4px;text-align:center;line-height:1.25}
+.cc-dash .cc-d-cell b{display:block;font-size:1.3em}
+.cc-dash .cc-d-cell span{font-size:.8em;opacity:.8;white-space:nowrap}
+.cc-dash .cc-d-cell.zero{opacity:.55}
+.cc-dash .cc-d-sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.cc-dash .cc-d-web{background:var(--d-web)}
+.cc-dash .cc-d-ssh{background:var(--d-ssh)}
+.cc-dash .cc-d-smb{background:var(--d-smb)}
+.cc-dash .cc-d-nfs{background:var(--d-nfs)}
+.cc-dash .cc-d-vpn{background:var(--d-vpn)}
+.cc-dash .cc-d-list{list-style:none;margin:0;padding:0}
+.cc-dash .cc-d-list li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:2px 0}
+.cc-dash .cc-d-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-dash .cc-d-protos{display:inline-flex;gap:2px}
+.cc-dash .cc-d-protos .cc-d-sw{margin:0}
+.cc-dash code{font-size:.85em;opacity:.75}
+/* cc-warn, not warn: the webGUI styles a bare warn class as a full-width yellow band */
+.cc-dash .cc-warn{color:var(--d-warn);font-weight:600}
+.cc-dash .cc-d-notes,.cc-dash .cc-d-empty,.cc-dash .cc-d-more{margin:6px 0 0;font-size:.9em;opacity:.85}
+.cc-dash .cc-d-more{display:block;opacity:.7}

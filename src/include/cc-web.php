@@ -15,8 +15,9 @@ require_once __DIR__ . '/cc-common.php';
 
 /**
  * @param array $known session tag => ['ip', 'login_at', 'match' (exact|inferred)]. Updated in place.
+ * @param int $idleLimit seconds from the last request before an Idle session becomes Stale (setting idle_limit).
  */
-function cc_web_sessions(array $events, array $sockets, array $ifaces, int $now, array &$known): array
+function cc_web_sessions(array $events, array $sockets, array $ifaces, int $now, array &$known, int $idleLimit = CC_IDLE_LIMIT): array
 {
     $loginAt = [];
     foreach ($events as $e) {
@@ -86,7 +87,7 @@ function cc_web_sessions(array $events, array $sockets, array $ifaces, int $now,
             $s['via'] = $live[$s['ip']]['via'];
             $s['connections'] = $live[$s['ip']]['connections'];
         } else {
-            $s['state'] = $now - $s['last_request'] < CC_IDLE_LIMIT ? 'idle' : 'stale';
+            $s['state'] = $now - $s['last_request'] < $idleLimit ? 'idle' : 'stale';
         }
     }
     unset($s);

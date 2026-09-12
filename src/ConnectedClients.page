@@ -3,6 +3,7 @@ Title="Connected Clients"
 Icon="plug"
 Tag="plug"
 Markdown="false"
+Nchan="connections_publisher"
 ---
 <?php
 /**
@@ -10,7 +11,8 @@ Markdown="false"
  *   <name>ConnectedClients</name>
  *   <description>Tools page: who is connected to this server now (web UI, SSH, SMB, NFS,
  *   VPN), a timeline and the sign-in events. The page shell is static; assets/cc-view.js
- *   polls state.php every 5 seconds and renders the data.</description>
+ *   renders the snapshots that nchan/connections_publisher pushes (Nchan header), or reads
+ *   state.php when nchan is silent (docs/specs/LIVE_UPDATES.md).</description>
  *   <dependencies>assets/cc.css, assets/cc-model.js, assets/cc-view.js, state.php</dependencies>
  * </module_context>
  */
@@ -36,9 +38,12 @@ $ccDark = in_array($display['theme'] ?? 'white', ['black', 'gray'], true);
           <label class="cc-switch" title="Connections from this server itself and from its Docker containers"><input type="checkbox" data-pref="local"><span class="cc-knob" aria-hidden="true"></span>Local traffic</label>
           <label class="cc-switch" title="Session files whose last request is older than 30 minutes"><input type="checkbox" data-pref="stale"><span class="cc-knob" aria-hidden="true"></span>Stale sessions</label>
         </div></div>
+      <a class="cc-cog" href="/Settings/ConnectedClientsSettings" title="Plugin settings" aria-label="Plugin settings"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg></a>
     </div>
   </div>
   <div class="cc-banner" id="cc-banner" role="status" hidden></div>
+  <div class="cc-banner" id="cc-src-banner" role="status" hidden></div>
+  <div class="cc-banner cc-act-msg" id="cc-act-msg" role="status" aria-live="polite" hidden></div>
   <section class="cc-strip" id="cc-strip" aria-label="Sessions by protocol"></section>
   <div class="cc-main">
     <div class="cc-col">

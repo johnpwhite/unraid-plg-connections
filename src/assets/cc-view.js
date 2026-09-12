@@ -1,7 +1,8 @@
 /*
  * <module_context>
  *   <name>cc-view</name>
- *   <description>Connected Clients page: polls state.php every 5 seconds and renders the
+ *   <description>Connected Clients page: takes each snapshot from the nchan channel
+ *   connections (docs/specs/LIVE_UPDATES.md), or from state.php when nchan is silent, and renders the
  *   protocol strip, "right now", the timeline, the sign-in events and the sources. Each
  *   viewer's toggles are kept in localStorage.</description>
  *   <dependencies>cc-model.js</dependencies>
@@ -14,6 +15,7 @@
   const { PROTO, ORDER, KIND, STATE, RANK, esc, plural } = window.CCModel;
   const $ = (id) => document.getElementById(id);
   const STATE_URL = '/plugins/unraid-connections/state.php';
+  const ACTION_URL = '/plugins/unraid-connections/action.php';
   const POLL_MS = 5000;
   const RC = '/usr/local/emhttp/plugins/unraid-connections/scripts/rc.unraid-connections';
 
@@ -22,6 +24,9 @@
   const savePrefs = () => { try { localStorage.setItem('cc-prefs', JSON.stringify(prefs)); } catch (e) { /* storage blocked */ } };
 
   let M = null;
+  let ownTag = null;   // the viewer's own web session tag (ACTIONS.md)
+  const openHistory = new Set();   // client IPs whose history panel is open
+  const historyCache = new Map();  // ip -> { at, data | error }
   const vis = (s) => prefs.local || !M.isLocal(s.ip);
   const isNow = (s) => s.state === 'active' || s.state === 'idle';
   const lastOf = (s) => s.end ?? M.NOW;
@@ -34,8 +39,8 @@
     const D = M.D, age = Math.round(Date.now() / 1000 - M.NOW);
     $('cc-eyebrow').textContent = `${D.host.name} · Unraid ${D.host.version} · up ${M.dur(D.host.uptime)}`;
     $('cc-live').innerHTML = age > 20
-      ? `<span class="cc-dot warn" aria-hidden="true"></span>No new data since ${esc(M.dayhm(M.NOW))}. The collector may have stopped.`
-      : `<span class="cc-dot live" aria-hidden="true"></span>Live · updated ${M.hms(M.NOW)} ${esc(M.zone)} · every ${D.collector ? D.collector.interval : 5} s`;
+      ? `<span class="cc-dot cc-warn" aria-hidden="true"></span>No new data since ${esc(M.dayhm(M.NOW))}. The collector may have stopped.`
+      : `<span class="cc-dot live" aria-hidden="true"></span>Live · updated ${M.hms(M.NOW)} ${esc(M.zone)} · every ${D.collector ? D.collector.interval : 5} s (${pushed() ? 'nchan push' : 'polling'})`;
     $('cc-h-tl').textContent = `Last ${prefs.win} hours`;
   }
 
@@ -52,7 +57,7 @@
       } else if (p === 'ssh') {
         sub.push(`${all.filter((s) => s.state === 'ended' && vis(s) && lastOf(s) >= M.NOW - prefs.win * 3600).length} ended in ${prefs.win} h`);
       } else if (p === 'smb') {
-        const shares = shown.flatMap((s) => s.raw.shares.map((x) => x.share));
+        const shares = [...new Set(shown.flatMap((s) => s.raw.shares.map((x) => x.share)))];   // two clients on one share: name it once
         sub.push(shares.length ? shares.join(', ') : (D.smb.available ? 'no share open' : 'Samba is not running'));
       } else if (p === 'nfs') {
         sub.push(shown.length ? shown.map((s) => 'NFS v' + s.raw.version).join(', ') : 'no NFS v4 client');
@@ -60,6 +65,8 @@
         sub.push(wg.length ? plural(wg.length, 'WireGuard peer') : 'no WireGuard tunnel');
         sub.push(`${plural(tp.length, 'Tailscale peer')}, ${tp.filter((x) => x.online).length} online`);
       }
+      const src = M.sources[p];
+      if (src && src.state !== 'ok') { sub.length = 0; sub.push(src.state === 'disabled' ? 'turned off in settings' : (src.reason || 'not available')); }
       if (hidden) sub.push(`${hidden} local, hidden`);
       const n = shown.length;
       return `<div class="cc-cell${n ? '' : ' zero'}"><div class="cc-cell-h"><i class="cc-sw cc-p-${p}" aria-hidden="true"></i><span>${PROTO[p].name}</span><code>${esc(PROTO[p].port)}</code></div>
@@ -68,11 +75,12 @@
     }).join('');
   }
 
+  const actBtn = (a) => (a ? `<button type="button" class="cc-linkbtn cc-act" data-act="${esc(a.act)}" data-target="${esc(a.target)}" data-label="${esc(a.label)}" data-what="${esc(a.what)}" data-warn="${esc(a.warn)}">${esc(a.label)}</button>` : '');
   function srow(s, lead) {
     const d = M.describe(s), w = M.since(s);
     return `<div class="cc-srow"><div>${lead}</div><div>${stateHtml(s.state)}</div>
       <div class="cc-det">${d.bits.map(esc).join('<span class="sep"> · </span>')}${d.chips.map((c) => ' ' + chipHtml(c)).join('')}</div>
-      <div class="cc-when"><span>${esc(w.text)}</span>${w.sub ? `<small>${esc(w.sub)}</small>` : ''}</div></div>`;
+      <div class="cc-when"><span>${esc(w.text)}</span>${w.sub ? `<small>${esc(w.sub)}</small>` : ''}${actBtn(M.actionFor(s))}</div></div>`;
   }
   function renderRoster() {
     const rows = M.S.filter((s) => vis(s) && (isNow(s) || (prefs.stale && s.state === 'stale')));
@@ -87,8 +95,11 @@
         .sort((a, b) => a.best - b.best || b.last - a.last)
         .map(({ ip, list }) => {
           const c = M.info(ip);
-          const head = `<div class="cc-c-head"><b>${esc(M.clientName(list[0]))}</b>${chipHtml([KIND[c.kind] || 'Unknown', M.kindTitle(c)], c.kind === 'public' ? 'warn' : '')}<code>${esc(ip || '—')}</code>${c.mac ? `<code class="mac">${esc(c.mac)}</code>` : ''}</div>`;
-          return `<section class="cc-client">${head}<div class="cc-srows">${list.map((s) => srow(s, protoHtml(s.proto))).join('')}</div></section>`;
+          const dns = c.label ? M.dnsName(ip) : '';
+          const proxy = c.proxy ? chipHtml(['Via proxy', 'This address is in your proxy ranges. The real client is behind it.']) : '';
+          const head = `<div class="cc-c-head"><b>${esc(M.clientName(list[0]))}</b>${dns ? `<small class="cc-dns">${esc(dns)}</small>` : ''}${chipHtml([KIND[c.kind] || 'Unknown', M.kindTitle(c)], c.kind === 'public' ? 'cc-warn' : '')}${proxy}<code>${esc(ip || '—')}</code>${c.mac ? `<code class="mac">${esc(c.mac)}</code>` : ''}</div>`;
+          const hist = (M.D.history && M.D.history.ok && ip && ip !== '?') ? `<button type="button" class="cc-linkbtn cc-hist-btn" data-history="${esc(ip)}" aria-expanded="${openHistory.has(ip)}">${openHistory.has(ip) ? 'Hide history' : 'History'}</button>` : '';
+          return `<section class="cc-client" data-client="${esc(ip)}">${head.replace(/<\/div>$/, hist + '</div>')}<div class="cc-srows">${list.map((s) => srow(s, protoHtml(s.proto))).join('')}</div></section>`;
         }).join('');
     } else {
       html = ORDER.map((p) => {
@@ -99,6 +110,10 @@
       }).join('');
     }
     el.innerHTML = html || '<p class="cc-empty">No client holds a session right now.</p>';
+    for (const ip of openHistory) {
+      const sec = el.querySelector(`section[data-client="${CSS.escape(ip)}"]`);
+      if (sec) sec.insertAdjacentHTML('beforeend', historyPanel(ip));
+    }
     const live = M.S.filter((s) => vis(s) && isNow(s));
     $('cc-now-meta').textContent = `${plural(new Set(live.map((s) => s.ip)).size, 'client')} · ${plural(live.length, 'session')}`;
     const notes = [];
@@ -110,11 +125,50 @@
     $('cc-hidden-note').hidden = !notes.length;
   }
 
+  // Client history panel (docs/specs/HISTORY.md): ended sessions and sign-in events from history.php.
+  function historyPanel(ip) {
+    const h = historyCache.get(ip);
+    if (!h || (!h.data && !h.error)) return '<div class="cc-history">Reading the history…</div>';
+    if (h.error) return `<div class="cc-history">The history could not be read (${esc(h.error)}).</div>`;
+    const days = (M.D.history && M.D.history.days) || 30;
+    const ses = (h.data.sessions || []).slice(0, 50).map((x) => {
+      const s = { proto: x.proto, ip: x.ip, state: 'ended', start: x.start, end: x.end, raw: Object.assign({}, x.raw || {}, { state: 'ended' }), fromHistory: true };
+      const d = M.describe(s);
+      return `<div class="cc-hrow">${protoHtml(x.proto)}<span class="cc-hwhen">${esc(M.dayhm(x.start))} → ${esc(M.dayhm(x.end))} · ${esc(M.dur(x.end - x.start))}</span><span class="cc-det">${d.bits.slice(0, 3).map(esc).join(' · ')}</span></div>`;
+    }).join('');
+    const evs = (h.data.events || []).slice(0, 50).map((e) => `<div class="cc-hrow">${protoHtml(e.proto)}<span class="cc-hwhen">${esc(M.dayLabel(e.t))} ${M.hms(e.t)}</span><span class="cc-det">${e.type === 'login_failed' ? 'Failed sign-in' : (e.type === 'logout' ? (e.proto === 'ssh' ? 'Disconnected' : 'Signed out') : 'Signed in')} · ${esc(e.user || '')}</span></div>`).join('');
+    return `<div class="cc-history"><div class="cc-hhead">History, last ${days} days</div>
+      <div class="cc-hsub">Ended sessions (${(h.data.sessions || []).length})</div>${ses || '<div class="cc-empty">None.</div>'}
+      <div class="cc-hsub">Sign-in events (${(h.data.events || []).length})</div>${evs || '<div class="cc-empty">None.</div>'}</div>`;
+  }
+  async function toggleHistory(ip) {
+    if (openHistory.has(ip)) { openHistory.delete(ip); renderRoster(); return; }
+    openHistory.add(ip);
+    const c = historyCache.get(ip);
+    if (!c || Date.now() - c.at > 30000) {
+      historyCache.set(ip, { at: Date.now() });
+      renderRoster();
+      try {
+        const r = await fetch('/plugins/unraid-connections/history.php?ip=' + encodeURIComponent(ip), { cache: 'no-store', credentials: 'same-origin' });
+        const data = await r.json();
+        historyCache.set(ip, r.ok && !data.error ? { at: Date.now(), data } : { at: Date.now(), error: data.error || `HTTP ${r.status}` });
+      } catch (e) {
+        historyCache.set(ip, { at: Date.now(), error: String(e.message || e) });
+      }
+    }
+    renderRoster();
+  }
+
   function renderSources() {
     const D = M.D, w = D.web, tp = (D.tailscale && D.tailscale.peers) || [], wg = (D.wireguard && D.wireguard.peers) || [];
     const rows = [
       [true, 'PHP session files', `${w.sessions.length} signed in, ${plural(w.anonymous_sessions, 'visitor file')}`],
-      [true, 'Syslog sign-in lines', `${plural(D.events.length, 'event')}, 7 days`],
+      D.history && D.history.ok
+        ? [true, 'History database', `${plural(D.events.length, 'event')}, ${D.history.days} days · ${plural(D.history.ended.length, 'ended session')}, 72 h${D.history.restored ? ' · restored from flash at start' : ''}`]
+        : [false, 'History database', 'not available; events come from syslog (7 days)'],
+      D.notify && D.notify.on.length
+        ? [true, 'Notifications', `${D.notify.on.length} of 3 kinds on · ${plural(D.notify.sent_24h, 'alert')} in 24 h`]
+        : [false, 'Notifications', D.notify ? 'all turned off in settings' : 'not available'],
       [true, 'Live sockets (ss)', `${(w.live || []).reduce((a, l) => a + l.connections, 0)} web, ${D.ssh.sessions.filter((s) => s.state === 'active').length} SSH, ${D.nfs.tcp_peers.length} NFS`],
       [w.nchan.subscribers != null, 'nchan status', `${w.nchan.subscribers ?? '?'} subscribers, ${w.nchan.channels ?? '?'} channels`],
       [D.smb.available, 'smbstatus', D.smb.available ? `Samba ${D.smb.version}, ${plural(D.smb.sessions.length, 'session')}` : 'not available'],
@@ -123,6 +177,7 @@
       [tp.some((x) => x.online), 'Tailscale', D.tailscale.available ? `${plural(tp.length, 'peer')}, ${tp.filter((x) => x.online).length} online` : 'not installed'],
       [D.ftp.enabled, 'FTP', D.ftp.enabled ? 'enabled' : 'service disabled'],
     ];
+    for (const p of ORDER) { const st = M.sources[p]; if (st && st.state === 'disabled') rows.push([false, `${PROTO[p].name} adapter`, 'turned off in settings']); }
     $('cc-sources').innerHTML = rows.map(([ok, name, what]) =>
       `<li><span class="${ok ? 'ok' : 'off'}" aria-label="${ok ? 'Data found' : 'Nothing to read'}">${ok ? '✓' : '–'}</span><span>${esc(name)}</span><em>${esc(what)}</em></li>`).join('');
     const cav = [];
@@ -201,6 +256,13 @@
     $('cc-ev-more').textContent = prefs.evAll ? 'Show the latest 20' : `Show all ${ev.length}`;
   }
 
+  // Real failures only; a service that is off or turned off in settings shows in its cell (SOURCE_STATUS.md).
+  function renderSourceBanner() {
+    const bad = Object.entries(M.sources).filter(([, v]) => v && v.state === 'unavailable');
+    $('cc-src-banner').innerHTML = bad.map(([k, v]) => `<div><b>${esc(PROTO[k] ? PROTO[k].name : k)}:</b> ${esc(v.reason || 'not available')} The other sources still work.</div>`).join('');
+    $('cc-src-banner').hidden = !bad.length;
+  }
+
   function syncControls() {
     root.querySelectorAll('button[data-pref]').forEach((b) => {
       const v = b.dataset.pref === 'win' ? +b.dataset.val : b.dataset.val;
@@ -212,12 +274,16 @@
   function render(force) {
     syncControls();
     if (!M) return;
-    renderHead(); renderStrip(); renderRoster(); renderSources();
+    renderHead(); renderSourceBanner(); renderStrip(); renderRoster(); renderSources();
     if (force || !tlBusy) renderTimeline();
     renderEvents();
   }
 
   root.addEventListener('click', (e) => {
+    const ab = e.target.closest('.cc-act');
+    if (ab) { runAction(ab.dataset); return; }
+    const hb = e.target.closest('[data-history]');
+    if (hb) { toggleHistory(hb.dataset.history); return; }
     const b = e.target.closest('button[data-pref]');
     if (b) { const k = b.dataset.pref; prefs[k] = k === 'win' ? +b.dataset.val : b.dataset.val; if (k === 'ev') prefs.evAll = false; savePrefs(); render(true); return; }
     const s = e.target.closest('[data-set]');
@@ -248,6 +314,42 @@
   tl.addEventListener('focusout', () => { tlBusy = false; tip.hidden = true; });
   window.addEventListener('scroll', () => { tip.hidden = true; }, { passive: true });
 
+  // Actions (docs/specs/ACTIONS.md): confirm, then POST to action.php with the csrf_token of the page.
+  function confirmBox(title, text, label, onYes) {
+    if (typeof swal === 'function') {
+      swal({ title, text, type: 'warning', showCancelButton: true, confirmButtonText: label, cancelButtonText: 'Cancel', closeOnConfirm: true }, (yes) => { if (yes) onYes(); });
+    } else if (window.confirm(`${title}\n\n${text}`)) {
+      onYes();
+    }
+  }
+  let actTimer = null;
+  function actMessage(text, bad) {
+    const el = $('cc-act-msg');
+    el.textContent = text;
+    el.classList.toggle('bad', !!bad);
+    el.hidden = false;
+    clearTimeout(actTimer);
+    actTimer = setTimeout(() => { el.hidden = true; }, 12000);
+  }
+  function runAction(d) {
+    confirmBox(`${d.label}: ${d.what}?`, d.warn, d.label, async () => {
+      try {
+        const body = new URLSearchParams({ action: d.act, target: d.target, csrf_token: window.csrf_token || '' });
+        const r = await fetch(ACTION_URL, { method: 'POST', body, credentials: 'same-origin' });
+        const txt = await r.text();
+        let res;
+        try { res = JSON.parse(txt); } catch (e) {
+          res = { ok: false, message: txt ? `HTTP ${r.status}` : 'The webGUI refused the request (security token). Reload the page and try again.' };
+        }
+        actMessage(res.ok ? res.message : `Not done: ${res.message || res.error}`, !res.ok);
+      } catch (e) {
+        actMessage(`Not done: ${e.message || e}`, true);
+      }
+      lastPush = 0;
+      setTimeout(poll, 1500);   // the collector sees the change in its next poll
+    });
+  }
+
   function showBanner(err) {
     const msg = String(err && err.message || err);
     $('cc-banner').innerHTML = /collector_not_running|HTTP 503/.test(msg)
@@ -255,23 +357,54 @@
       : `The page could not read the collector data (${esc(msg)}). It tries again every 5 seconds.`;
     $('cc-banner').hidden = false;
   }
-  let timer = null;
+  // Live updates (docs/specs/LIVE_UPDATES.md): nchan pushes each snapshot; state.php is the fallback.
+  let timer = null, lastPush = 0, pending = null;
+  const intervalMs = () => ((M && M.D.collector && M.D.collector.interval) || POLL_MS / 1000) * 1000;
+  const pushed = () => Date.now() - lastPush < 2.5 * intervalMs();
+  function apply(data) {
+    if (!data || data.error) throw new Error((data && data.error) || 'no data');
+    M = window.CCModel.create(data, { ownTag });
+    $('cc-banner').hidden = true;
+    render(false);
+  }
   async function poll() {
     clearTimeout(timer);
     try {
-      const r = await fetch(STATE_URL, { cache: 'no-store', credentials: 'same-origin' });
-      const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-      if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
-      M = window.CCModel.create(data);
-      $('cc-banner').hidden = true;
-      render(false);
+      if (!pushed()) {
+        const r = await fetch(STATE_URL, { cache: 'no-store', credentials: 'same-origin' });
+        const data = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+        if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+        apply(data);
+      }
     } catch (e) {
       showBanner(e);
     } finally {
-      if (!document.hidden) timer = setTimeout(poll, POLL_MS);
+      if (!document.hidden) timer = setTimeout(poll, intervalMs());
     }
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); else poll(); });
+  if (typeof NchanSubscriber === 'function') {
+    try {
+      const nc = new NchanSubscriber('/sub/connections', { subscriber: 'websocket', reconnectTimeout: 5000 });
+      nc.on('message', (msg) => {
+        let data;
+        try { data = JSON.parse(msg); } catch (e) { return; }   // a bad message: the poll fallback covers it
+        lastPush = Date.now();
+        if (document.hidden) { pending = data; return; }
+        try { apply(data); } catch (e) { showBanner(e); }
+      });
+      nc.start();
+    } catch (e) { /* no nchan: polling only */ }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(timer); return; }
+    if (pending) { const d = pending; pending = null; try { apply(d); } catch (e) { showBanner(e); } }
+    poll();
+  });
+  // ACTIONS.md: the viewer's own session tag, so the page marks "This browser" and shows no sign-out for it.
+  fetch(ACTION_URL, { cache: 'no-store', credentials: 'same-origin' }).then((r) => r.json()).then((j) => {
+    ownTag = (j && j.own_tag) || null;
+    if (M) { M = window.CCModel.create(M.D, { ownTag }); render(true); }
+  }).catch(() => { /* no tag: the server still refuses the own session */ });
   syncControls();
   poll();
 }());

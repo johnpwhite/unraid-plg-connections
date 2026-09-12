@@ -1,0 +1,6 @@
+#!/bin/bash
+# event/stopping — the array is stopping, which is also part of a shutdown. Copy the history
+# database to flash now, so the last minutes of history survive the reboot (docs/specs/HISTORY.md).
+# The copy takes about a second; the timeout keeps the stop sequence from waiting on it.
+timeout 20 /usr/bin/php -q /usr/local/emhttp/plugins/unraid-connections/scripts/history-flush.php >/dev/null 2>&1
+exit 0

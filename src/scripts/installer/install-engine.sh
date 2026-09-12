@@ -32,10 +32,20 @@ RC="$EMHTTP_DEST/scripts/rc.$NAME"
 # Files that must be in the archive (tests/php/ReleaseConsistencyTest.php checks this list against src/).
 CC_REQUIRED=(
   ConnectedClients.page
+  ConnectedClientsSettings.page
   README.md
   unraid-connections.png
   state.php
+  history.php
+  summary.php
+  action.php
+  ConnectedClientsDash.page
   include/cc-common.php
+  include/cc-config.php
+  include/cc-history.php
+  include/cc-summary.php
+  include/cc-notify.php
+  include/cc-actions.php
   include/cc-logs.php
   include/cc-web.php
   include/cc-services.php
@@ -43,10 +53,16 @@ CC_REQUIRED=(
   include/cc-snapshot.php
   scripts/collector.php
   scripts/rc.unraid-connections
+  scripts/history-flush.php
+  event/stopping
+  nchan/connections_publisher
+  nchan/connections_dash
   scripts/installer/install-engine.sh
   assets/cc.css
   assets/cc-model.js
   assets/cc-view.js
+  assets/cc-dash.js
+  assets/cc-dash.css
 )
 
 # This engine only ever replaces its own plugin directory.
@@ -95,8 +111,31 @@ if ! cp -r "$STAGE/src/." "$EMHTTP_DEST/"; then
 fi
 find "$EMHTTP_DEST" -type d -exec chmod 755 {} +
 find "$EMHTTP_DEST" -type f -exec chmod 644 {} +
-chmod 755 "$EMHTTP_DEST/scripts/collector.php" "$RC" "$EMHTTP_DEST/scripts/installer/install-engine.sh"
+chmod 755 "$EMHTTP_DEST/scripts/collector.php" "$RC" "$EMHTTP_DEST/scripts/installer/install-engine.sh" "$EMHTTP_DEST/scripts/history-flush.php"
+find "$EMHTTP_DEST/event" "$EMHTTP_DEST/nchan" -type f -exec chmod 755 {} +
+# Stop the nchan scripts of the old version; the webGUI starts the new code on the next page load.
+pkill -f "$EMHTTP_DEST/nchan/" 2>/dev/null || true
 log_ok "Files installed to $EMHTTP_DEST."
+
+# rsyslog drop-in (docs/specs/HISTORY.md): copy the sign-in lines to the plugin's own log.
+# rsyslog 8 reads its config again only on a restart (a HUP only reopens files), so restart
+# it only when the rule text changes. /etc is in RAM, so a boot always writes the rule.
+RULE=/etc/rsyslog.d/40-unraid-connections.conf
+mkdir -p /var/log/unraid-connections
+chmod 700 /var/log/unraid-connections
+RULE_TEXT='# unraid-connections: copy webGUI and sshd sign-in lines to the plugin log (docs/specs/HISTORY.md).
+if ($programname == "webgui" or $programname == "sshd" or $programname == "sshd-session") then {
+  action(type="omfile" file="/var/log/unraid-connections/events.log" template="RSYSLOG_TraditionalFileFormat")
+}'
+if [ "$(cat "$RULE" 2>/dev/null)" != "$RULE_TEXT" ]; then
+  printf '%s\n' "$RULE_TEXT" > "$RULE"
+  if rsyslogd -N1 >/dev/null 2>&1; then
+    if /etc/rc.d/rc.rsyslogd restart >/dev/null 2>&1; then log_ok "rsyslog rule installed."; else log_warn "rsyslog did not restart; the collector reads syslog."; fi
+  else
+    rm -f "$RULE"
+    log_warn "rsyslog rejected the rule; the collector reads syslog instead."
+  fi
+fi
 
 # Keep only this version's cached archive on flash.
 if [ -n "$CONFIG_DIR" ] && [ -d "$CONFIG_DIR" ]; then

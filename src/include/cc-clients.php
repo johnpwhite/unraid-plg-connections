@@ -5,16 +5,26 @@
  *   <description>Names and kinds for client IPs: this server, Docker container, LAN,
  *   Tailscale or public. Uses the Tailscale peer list, docker inspect, /proc/net/arp and
  *   reverse DNS. Slow lookups are cached, because the collector runs every 5 seconds.</description>
- *   <dependencies>cc-common.php, getent, optional: docker</dependencies>
+ *   <dependencies>cc-common.php, cc-config.php, getent, optional: docker</dependencies>
  * </module_context>
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/cc-common.php';
+require_once __DIR__ . '/cc-config.php';
 
-function cc_client_info(array $ips, array $ifaces, array $tsPeers): array
+/** User label (by IP, then MAC, case-insensitive) and the proxy flag for one client. Pure. */
+function cc_client_identity(string $ip, ?string $mac, array $labels, array $ranges): array
 {
+    $label = $labels[strtolower($ip)] ?? ($mac !== null ? ($labels[strtolower($mac)] ?? null) : null);
+    return ['label' => $label, 'proxy' => cc_ip_in_ranges($ip, $ranges)];
+}
+
+function cc_client_info(array $ips, array $ifaces, array $tsPeers, array $config = []): array
+{
+    $labels = cc_labels_parse((string) ($config['labels'] ?? ''));
+    $ranges = cc_ranges_parse((string) ($config['proxy_ranges'] ?? ''));
     static $dns = [];        // ip => [name, time]
     static $docker = [];     // ip => container name
     static $dockerAt = 0;
@@ -69,7 +79,7 @@ function cc_client_info(array $ips, array $ifaces, array $tsPeers): array
             'name'      => $tsNames[$ip] ?? ($docker[$ip] ?? ($name !== '' ? $name : null)),
             'mac'       => $arp[$ip] ?? null,
             'container' => $docker[$ip] ?? null,
-        ];
+        ] + cc_client_identity($ip, $arp[$ip] ?? null, $labels, $ranges);
     }
     return $out;
 }
