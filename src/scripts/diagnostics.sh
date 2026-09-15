@@ -44,7 +44,8 @@ if [ -s "$RUN/state.json" ]; then
         printf("  collector: interval %s s, last poll %s ms\n", $d["collector"]["interval"] ?? "?", $d["collector"]["duration_ms"] ?? "?");
         printf("  history: %s, %s days, %d ended sessions in 72 h\n", !empty($d["history"]["ok"]) ? "ok" : "NOT AVAILABLE",
             $d["history"]["days"] ?? "?", count($d["history"]["ended"] ?? []));
-        printf("  notifications on: %s; alerts in 24 h: %d\n", implode(", ", $d["notify"]["on"] ?? []) ?: "none", $d["notify"]["sent_24h"] ?? 0);
+        $rules = $d["notify"]["rules"] ?? [];
+        printf("  rules: %d (%d on); alerts in 24 h: %d\n", count($rules), count(array_filter($rules, fn($r) => !empty($r["on"]))), $d["notify"]["sent_24h"] ?? 0);
     ' "$RUN/state.json" || bad "state.json is not valid JSON"
 else
     bad "state.json is missing"

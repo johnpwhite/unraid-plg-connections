@@ -10,9 +10,10 @@ Nchan="connections_publisher"
  * <module_context>
  *   <name>ConnectedClients</name>
  *   <description>Tools page: who is connected to this server now (web UI, SSH, SMB, NFS,
- *   VPN), a timeline and the sign-in events. The page shell is static; assets/cc-view.js
- *   renders the snapshots that nchan/connections_publisher pushes (Nchan header), or reads
- *   state.php when nchan is silent (docs/specs/LIVE_UPDATES.md).</description>
+ *   VPN), a timeline, the sign-in events and the event log (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md).
+ *   The page shell is static; assets/cc-view.js renders the snapshots that
+ *   nchan/connections_publisher pushes (Nchan header), or reads state.php when nchan is
+ *   silent (docs/specs/LIVE_UPDATES.md).</description>
  *   <dependencies>assets/cc.css, assets/cc-model.js, assets/cc-view.js, state.php</dependencies>
  * </module_context>
  */
@@ -61,6 +62,12 @@ $ccDark = in_array($display['theme'] ?? 'white', ['black', 'gray'], true);
           <div class="cc-seg" role="group" aria-label="Filter events"><button type="button" data-pref="ev" data-val="all">All<small id="cc-n-all"></small></button><button type="button" data-pref="ev" data-val="web">Web UI<small id="cc-n-web"></small></button><button type="button" data-pref="ev" data-val="ssh">SSH<small id="cc-n-ssh"></small></button><button type="button" data-pref="ev" data-val="failed">Failed<small id="cc-n-failed"></small></button></div></div>
         <div class="cc-ev-scroll"><table class="cc-ev" id="cc-events"></table></div>
         <div class="cc-ev-foot"><span id="cc-ev-count"></span><button type="button" class="cc-linkbtn" id="cc-ev-more" hidden></button></div>
+      </section>
+      <section class="cc-panel" id="cc-ledger" aria-labelledby="cc-h-lg">
+        <div class="cc-sec-h"><h2 id="cc-h-lg">Event log</h2>
+          <div class="cc-seg" role="group" aria-label="Filter the event log"><button type="button" data-pref="lg" data-val="all">All<small id="cc-n-lg-all"></small></button><button type="button" data-pref="lg" data-val="session">Sessions<small id="cc-n-lg-session"></small></button><button type="button" data-pref="lg" data-val="signin">Sign-ins<small id="cc-n-lg-signin"></small></button><button type="button" data-pref="lg" data-val="alert">Alerts<small id="cc-n-lg-alert"></small></button><button type="button" data-pref="lg" data-val="source">Sources<small id="cc-n-lg-source"></small></button><button type="button" data-pref="lg" data-val="action">Actions<small id="cc-n-lg-action"></small></button></div></div>
+        <div class="cc-ev-scroll"><table class="cc-ev" id="cc-ledger-table"></table></div>
+        <div class="cc-ev-foot"><span id="cc-lg-count"></span><button type="button" class="cc-linkbtn" id="cc-lg-more" hidden></button></div>
       </section>
     </div>
     <aside class="cc-side">

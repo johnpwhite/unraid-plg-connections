@@ -1,0 +1,117 @@
+/*
+ * <module_context>
+ *   <name>cc-settings.css</name>
+ *   <description>Settings page styles (docs/specs/SETTINGS_PAGE_DESIGN.md). Builds on the
+ *   Tools page tokens and components in cc.css (.cc-root, .cc-panel, .cc-switch, .cc-seg,
+ *   .cc-chip). Every rule is scoped under .cc-settings, so nothing leaks into the webGUI.</description>
+ * </module_context>
+ */
+.cc-settings{max-width:1180px}
+.cc-settings .cc-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.cc-settings .cc-top{align-items:flex-start}
+.cc-settings .cc-top a{color:var(--cc-ink-2);font-size:12px;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.cc-settings h1{margin:0;font-size:18px;font-weight:700;line-height:1.2}
+.cc-settings .cc-sub{color:var(--cc-muted);font-size:12px}
+.cc-settings .cc-panel{display:grid;gap:14px;align-content:start}
+.cc-settings .cc-panel .cc-sec-h{margin-bottom:0}
+.cc-settings .cc-panel .cc-sec-h p{flex-basis:100%;color:var(--cc-muted);font-size:12px}
+.cc-settings p,.cc-settings .cc-help{text-align:left}   /* the webGUI justifies paragraphs, which leaves gaps in short help lines */
+.cc-settings .cc-help{color:var(--cc-muted);font-size:12px;line-height:1.45;max-width:64ch}
+.cc-settings .cc-banner{display:grid;gap:2px}
+.cc-settings .cc-banner.cc-ok{border-color:color-mix(in srgb,var(--cc-good) 60%,transparent);background:color-mix(in srgb,var(--cc-good) 12%,transparent)}
+.cc-settings .cc-banner.cc-bad{border-color:color-mix(in srgb,var(--cc-crit) 60%,transparent);background:color-mix(in srgb,var(--cc-crit) 10%,transparent)}
+
+/* fields */
+.cc-settings .cc-field{display:grid;gap:5px;min-width:0}
+.cc-settings .cc-fields{display:flex;flex-wrap:wrap;gap:12px 22px}
+.cc-settings .cc-fields .cc-field{flex:1 1 150px;max-width:260px}
+.cc-settings .cc-lbl{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cc-muted)}
+.cc-settings .cc-unit{display:inline-flex;align-items:center;gap:6px}
+.cc-settings .cc-unit span{color:var(--cc-muted);font-size:12px}
+/* form controls: bordered fields that follow the theme (the webGUI underlines them and fixes their width) */
+.cc-settings input[type="text"],.cc-settings input[type="number"],.cc-settings select,.cc-settings textarea{
+  box-sizing:border-box;width:100%;max-width:100%;min-height:32px;margin:0;padding:5px 9px;
+  border:1px solid var(--cc-hair-2);border-radius:6px;background:var(--cc-page);color:var(--cc-ink);
+  font:inherit;font-size:13px;line-height:1.4;box-shadow:none;transition:border-color .15s
+}
+.cc-settings input[type="number"]{width:96px}
+.cc-settings textarea{font-family:var(--cc-mono);font-size:12px;min-height:88px;resize:vertical}
+.cc-settings select{padding-right:26px}
+.cc-settings input:focus-visible,.cc-settings select:focus-visible,.cc-settings textarea:focus-visible{outline:2px solid var(--cc-ink);outline-offset:1px;border-color:var(--cc-ink)}
+.cc-settings input::placeholder,.cc-settings textarea::placeholder{color:var(--cc-muted);opacity:1}
+.cc-settings .cc-sw-row{gap:8px 18px}
+.cc-settings .cc-switch{min-height:28px}
+/* a long switch label must wrap on a phone (cc.css keeps switch labels on one line for the short page toggles) */
+.cc-settings .cc-field>.cc-switch{white-space:normal;align-items:flex-start;line-height:1.4}
+.cc-settings .cc-field>.cc-switch .cc-knob{margin-top:3px}
+.cc-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* buttons: the .cc-root reset unsets <button>; <input type=submit> keeps the webGUI look unless styled here */
+.cc-settings .cc-btn,.cc-settings input.cc-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:5px 14px;margin:0;
+  border:1px solid var(--cc-hair-2);border-radius:6px;background:var(--cc-page);color:var(--cc-ink);
+  font:600 12.5px/1.4 inherit;font-family:inherit;letter-spacing:0;text-transform:none;cursor:pointer;box-shadow:none;transition:background .15s,color .15s
+}
+.cc-settings .cc-btn:hover,.cc-settings input.cc-btn:hover{background:var(--cc-well)}
+.cc-settings .cc-btn.cc-primary,.cc-settings input.cc-btn.cc-primary{background:var(--cc-ink);color:var(--cc-page);border-color:var(--cc-ink)}
+.cc-settings .cc-btn.cc-primary:hover,.cc-settings input.cc-btn.cc-primary:hover{opacity:.88}
+.cc-settings .cc-btn:disabled,.cc-settings input.cc-btn:disabled{opacity:.45;cursor:default}
+.cc-settings .cc-btn.cc-small{min-height:28px;padding:3px 10px;font-size:12px}
+.cc-settings .cc-linkbtn{font-size:12.5px;font-weight:600;min-height:28px;display:inline-flex;align-items:center}
+.cc-settings .cc-linkbtn:hover{color:var(--cc-ink-2)}
+.cc-settings .cc-actions-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;padding-top:4px}
+.cc-settings .cc-dirty{font-size:12px;color:var(--cc-warn);font-weight:700}
+.cc-settings .cc-test-msg{font-size:12px}
+.cc-settings .cc-msg-ok{color:var(--cc-good);font-weight:700}
+.cc-settings .cc-msg-err{color:var(--cc-crit);font-weight:700}
+
+/* the rules list */
+.cc-settings .cc-rules{display:grid;gap:1px;background:var(--cc-hair);border:1px solid var(--cc-hair);border-radius:8px;overflow:hidden}
+.cc-settings .cc-rule{background:var(--cc-page);padding:10px 14px;display:grid;gap:10px}
+.cc-settings .cc-rule[hidden]{display:none}
+.cc-settings .cc-rule-h{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;gap:6px 14px;align-items:center}
+.cc-settings .cc-rule-t{display:grid;gap:2px;min-width:0}
+.cc-settings .cc-rule-name{font-weight:700;font-size:13.5px}
+.cc-settings .cc-rule-sum{color:var(--cc-ink-2);font-size:12px;overflow-wrap:anywhere}
+.cc-settings .cc-rule-last{font:400 11px var(--cc-mono);color:var(--cc-muted);white-space:nowrap}
+.cc-settings .cc-rule-btns{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.cc-settings .cc-rule.cc-removed .cc-rule-t{opacity:.45;text-decoration:line-through}
+.cc-settings .cc-rule-del{color:var(--cc-crit);font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
+.cc-settings .cc-rule-edit{display:grid;gap:14px;padding:12px 14px 12px;border-radius:6px;background:var(--cc-well)}
+.cc-settings .cc-rule-edit[hidden]{display:none}
+.cc-settings .cc-rule-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:4px;border-top:1px solid var(--cc-hair)}
+.cc-settings .cc-danger{display:inline-flex;align-items:center;gap:7px;color:var(--cc-crit);font-weight:600;cursor:pointer}
+.cc-settings .cc-empty{padding:12px 14px;background:var(--cc-page);color:var(--cc-muted)}
+
+/* toggle chips (a checkbox each) */
+.cc-settings .cc-togs{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+.cc-settings .cc-tog-g{flex-basis:100%;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--cc-muted);margin-top:4px}
+.cc-settings .cc-tog-g:first-child{margin-top:0}
+.cc-settings .cc-tog-g small{display:block;font-size:11.5px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--cc-muted);margin-top:1px}
+.cc-settings .cc-tog[title]{cursor:help}
+.cc-settings .cc-edit-intro{max-width:none}
+.cc-settings .cc-tog{position:relative;display:inline-flex;align-items:center;min-height:30px;padding:3px 11px;border:1px solid var(--cc-hair-2);border-radius:15px;font-size:12.5px;color:var(--cc-ink-2);cursor:pointer;user-select:none;transition:background .15s,color .15s,border-color .15s}
+.cc-settings .cc-tog input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+.cc-settings .cc-tog:hover{background:var(--cc-well)}
+.cc-settings .cc-tog:has(input:checked){background:var(--cc-ink);color:var(--cc-page);border-color:var(--cc-ink)}
+.cc-settings .cc-tog:has(input:focus-visible){outline:2px solid var(--cc-ink);outline-offset:2px}
+/* the sink: a segmented control made of radios */
+.cc-settings .cc-seg-radio label{position:relative;display:inline-flex;align-items:center;min-height:28px;padding:0 12px;border-radius:4px;font-size:12.5px;font-weight:600;color:var(--cc-ink-2);cursor:pointer;white-space:nowrap}
+.cc-settings .cc-seg-radio label:hover{background:var(--cc-well);color:var(--cc-ink)}
+.cc-settings .cc-seg-radio input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+.cc-settings .cc-seg-radio label:has(input:checked){background:var(--cc-ink);color:var(--cc-page)}
+.cc-settings .cc-seg-radio label:has(input:focus-visible){outline:2px solid var(--cc-ink);outline-offset:2px}
+.cc-settings .cc-for-notify[hidden],.cc-settings .cc-for-script[hidden]{display:none}
+
+@media (max-width:900px){
+  .cc-settings .cc-grid2{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:767px){
+  .cc-settings .cc-rule-h{grid-template-columns:auto minmax(0,1fr)}
+  .cc-settings .cc-rule-h .cc-chip,.cc-settings .cc-rule-last{grid-column:2}
+  .cc-settings .cc-rule-btns{grid-column:1/-1;flex-wrap:wrap;white-space:normal}
+  .cc-settings .cc-fields .cc-field{max-width:none}
+  .cc-settings .cc-seg{flex-wrap:wrap}
+  .cc-settings .cc-seg-radio{display:flex;width:100%}
+  .cc-settings .cc-seg-radio label{flex:1 1 auto;justify-content:center;padding:0 8px}
+}

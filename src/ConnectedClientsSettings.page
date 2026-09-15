@@ -7,83 +7,507 @@ Markdown="false"
 /**
  * <module_context>
  *   <name>ConnectedClientsSettings</name>
- *   <description>Settings page (Settings → User Utilities → Connected Clients). The form
- *   posts to itself; local_prepend.php checks the csrf_token field. The collector reloads
- *   settings.ini when it changes, so a save needs no restart. A second button sends a test
- *   notification and saves nothing. docs/specs/SETTINGS.md, docs/specs/NOTIFICATIONS.md.</description>
- *   <dependencies>include/cc-config.php, include/cc-notify.php</dependencies>
+ *   <description>Settings page (Settings → User Utilities → Connected Clients), in the Tools
+ *   page look (docs/specs/SETTINGS_PAGE_DESIGN.md): three cards — Sources, Clients and page,
+ *   Alerts and subscriptions. The alerts card is one list of rules (the three defaults are
+ *   seeded once and are ordinary rules), each with a switch, a summary, Test and an editor
+ *   that opens on Edit. The failed sign-in threshold sits above the list. The form posts to itself; local_prepend.php
+ *   checks the csrf_token field. The collector reloads settings.ini and subscriptions.json when
+ *   they change, so a save needs no restart. Apply posts to save.php and Test to test.php in
+ *   the background (no reload, no resubmit on a refresh); the fired column follows state.php.
+ *   docs/specs/SETTINGS.md, NOTIFICATIONS.md, EVENTS_AND_SUBSCRIPTIONS.md.</description>
+ *   <dependencies>include/cc-config.php, include/cc-notify.php, include/cc-subs.php, include/cc-ledger.php, include/cc-settings.php, assets/cc.css, assets/cc-settings.css, save.php, test.php, state.php</dependencies>
  * </module_context>
  */
 require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-config.php';
 require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-notify.php';
+require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-subs.php';
+require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-ledger.php';
+require_once '/usr/local/emhttp/plugins/unraid-connections/include/cc-settings.php';
 
-$ccSaved = null;
-$ccTested = null;
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['cc_test_notify'])) {
-    $ccTested = cc_notify_send(['subject' => 'Test from Connected Clients', 'description' => 'Notifications from Connected Clients work.', 'importance' => 'normal']);
-} elseif (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['cc_save'])) {
-    $ccSaved = cc_config_write(cc_settings_from_post($_POST));
+// The page saves through save.php in the background (no reload, no resubmit on refresh). This
+// branch is the fallback without JavaScript, and the path the smoke test drives.
+$ccSaveResult = null;
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['cc_save'])) {
+    $ccSaveResult = cc_settings_apply($_POST);
 }
+cc_subs_seed(is_readable(CC_CONFIG_FILE) ? (@parse_ini_file(CC_CONFIG_FILE) ?: []) : []);   // the three default rules, once
 $cc = cc_config_read();
 $ccE = static fn($v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $ccOn = static fn(string $k): string => ($cc[$k] ?? 'yes') === 'yes' ? 'checked' : '';
+$ccBase = '/plugins/unraid-connections';
+$ccDir = '/usr/local/emhttp/plugins/unraid-connections';
+$ccV = static fn(string $f): int => @filemtime("$ccDir/$f") ?: time();
+$ccDark = in_array($display['theme'] ?? 'white', ['black', 'gray'], true);
+
+// Event kinds, grouped for the toggle chips (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md).
+// Each group: a one-line explanation, then its kinds as [label, tooltip].
+$ccKindGroups = [
+    'Sessions' => ['A client opens or closes a connection. The collector sees it within a few seconds.', [
+        'session.started' => ['Session started', 'A client opened a web UI, SSH, SMB, NFS or VPN session.'],
+        'session.ended'   => ['Session ended', 'A session closed, or the client went away.'],
+        'session.*'       => ['Any session event', 'Session started and Session ended.'],
+    ]],
+    'Sign-ins' => ['Sign-in lines from the system log, for the web UI and SSH.', [
+        'signin.ok'     => ['Signed in', 'A successful sign-in to the web UI or over SSH.'],
+        'signin.failed' => ['Failed sign-in', 'A wrong password or key on the web UI or over SSH.'],
+        'signout'       => ['Signed out', 'A web UI sign-out, or an SSH disconnect.'],
+        'signin.*'      => ['Any sign-in event', 'Signed in, Failed sign-in and Signed out.'],
+    ]],
+    'Built-in checks' => ['Three checks the plugin runs on every poll. Each one fires once, then waits.', [
+        'client.new'       => ['New client', 'The first connection from an address the history has not seen in ' . (int) $cc['history_days'] . ' days. Local traffic and VPN peers never count.'],
+        'signin.threshold' => ['Failed sign-ins over the limit', (int) $cc['notify_failed_count'] . ' failed sign-ins from one address in ' . (int) $cc['notify_failed_window'] . ' minutes (the check above the list). The same address fires it again only after the window.'],
+        'signin.public'    => ['SSH from the internet', 'An SSH sign-in from a public address. Private, Tailscale and VPN ranges are not the internet.'],
+    ]],
+    'Sources' => ['A protocol reader stops working, or works again.', [
+        'source.unavailable' => ['Source unavailable', 'A reader failed, for example smbstatus while Samba runs. The page shows a banner too.'],
+        'source.available'   => ['Source available', 'The reader works again.'],
+    ]],
+    'Actions' => ['Someone used a button on the Connected Clients page.', [
+        'action.taken' => ['Action from the page', 'A sign-out, end or close button was used. The event names the action and who asked.'],
+    ]],
+    'Everything' => ['Every event the plugin records.', [
+        '*' => ['Any event', 'All of the above. Use a filter below, or a cooldown, to keep it quiet.'],
+    ]],
+];
+$ccKindLabels = [];
+foreach ($ccKindGroups as $ccG) {
+    foreach ($ccG[1] as $ccK => $ccLT) {
+        $ccKindLabels[$ccK] = $ccLT[0];
+    }
+}
+$ccProtoHelp = ['web' => 'The Unraid web interface (this webGUI).', 'ssh' => 'SSH and SFTP sessions.', 'smb' => 'Windows file shares (Samba).', 'nfs' => 'NFS mounts (version 4; version 3 shows as a live connection only).', 'vpn' => 'WireGuard peers and Tailscale peers.'];
+$ccClientHelp = ['lan' => 'A private address on your network.', 'public' => 'A public address: the client is on the internet.', 'tailscale' => 'A Tailscale peer (100.x address).', 'docker' => 'One of this server\'s Docker containers.', 'self' => 'This server itself.', 'loopback' => '127.0.0.1 or ::1.', 'unknown' => 'No address was recorded, for example a web session that started before the plugin.'];
+$ccProtoOptions = ['web' => 'Web UI', 'ssh' => 'SSH', 'smb' => 'SMB', 'nfs' => 'NFS', 'vpn' => 'VPN'];
+$ccClientOptions = ['lan' => 'LAN', 'public' => 'Internet', 'tailscale' => 'Tailscale', 'docker' => 'Docker container', 'self' => 'This server', 'loopback' => 'Loopback', 'unknown' => 'Unknown'];
+$ccSinkOptions = ['notify' => 'Unraid notification', 'syslog' => 'Syslog line', 'script' => 'Run a script'];
+$ccImportanceOptions = ['normal' => 'Normal', 'warning' => 'Warning', 'alert' => 'Alert'];
+$ccSubsScripts = cc_subs_scripts();
+$ccSubsState = cc_subs_state_read();
+$ccSubsRules = cc_subs_read();
+$ccRulesOn = count(array_filter($ccSubsRules, static fn($r) => !empty($r['on'])));
+$ccRulesTotal = count($ccSubsRules);
+$ccDefaultsMissing = count(array_diff(array_column(cc_subs_defaults(), 'id'), array_column($ccSubsRules, 'id')));
+
+/** "Fired 3 × · last 11:02" from the collector's state for one rule, or ''. */
+$ccLastFired = static function (string $id) use ($ccSubsState): string {
+    $st = $ccSubsState[$id] ?? [];
+    if (empty($st['last'])) {
+        return 'Never fired';
+    }
+    return 'Fired ' . (int) ($st['fired'] ?? 0) . ' × · last ' . date('H:i, j M', (int) $st['last']);
+};
+/** One line that says what a user rule does: "Session started · Web UI · any client → Unraid notification". */
+$ccRuleSummary = static function (array $r) use ($ccKindLabels, $ccProtoOptions, $ccClientOptions, $ccSinkOptions, $ccSubsScripts): string {
+    $kinds = array_map(static fn($k) => $ccKindLabels[$k] ?? $k, $r['kinds'] ?? []);
+    $k = count($kinds) > 3 ? implode(', ', array_slice($kinds, 0, 2)) . ' and ' . (count($kinds) - 2) . ' more' : implode(' or ', $kinds);
+    $p = ($r['protos'] ?? []) === [] ? 'any protocol' : implode(', ', array_map(static fn($x) => $ccProtoOptions[$x] ?? $x, $r['protos']));
+    $c = ($r['clients'] ?? []) === [] ? 'any client' : implode(', ', array_map(static fn($x) => $ccClientOptions[$x] ?? $x, $r['clients']));
+    $extra = [];
+    if (!empty($r['ranges'])) {
+        $extra[] = implode(' ', $r['ranges']);
+    }
+    if (!empty($r['user'])) {
+        $extra[] = 'user ' . $r['user'];
+    }
+    $sink = $ccSinkOptions[$r['sink'] ?? 'notify'] ?? (string) ($r['sink'] ?? '');
+    if (($r['sink'] ?? 'notify') === 'notify' && ($r['importance'] ?? 'normal') !== 'normal') {
+        $sink .= ' (' . $r['importance'] . ')';
+    }
+    if (($r['sink'] ?? '') === 'script') {
+        $sink = ($r['script'] ?? '') === '' ? 'Run a script (none chosen)'
+            : (in_array($r['script'], $ccSubsScripts, true) ? 'Run ' . $r['script'] : 'Run ' . $r['script'] . ' (script missing)');
+    }
+    if (!empty($r['cooldown'])) {
+        $sink .= ' · at most once in ' . (int) $r['cooldown'] . ' min';
+    }
+    return ($k !== '' ? $k : 'no event') . ' · ' . $p . ' · ' . $c . ($extra !== [] ? ' · ' . implode(' · ', $extra) : '') . ' → ' . $sink;
+};
+/** The editor of a user rule (or of the empty "new" rule). Hidden until Edit or Add a rule. */
+$ccEditor = static function (string $id, array $rule, bool $open) use ($ccE, $ccKindGroups, $ccProtoOptions, $ccProtoHelp, $ccClientOptions, $ccClientHelp, $ccSinkOptions, $ccImportanceOptions, $ccSubsScripts): void {
+    $n = static fn(string $f): string => 'rule[' . $id . '][' . $f . ']';
+    $sink = (string) ($rule['sink'] ?? 'notify');
+    ?>
+    <div class="cc-rule-edit" id="cc-edit-<?= $ccE($id) ?>" <?= $open ? '' : 'hidden' ?>>
+      <p class="cc-help cc-edit-intro">A rule fires when an event of a kind you pick happens and every filter below matches. Hold the pointer over a choice for what it means.</p>
+      <div class="cc-fields">
+        <div class="cc-field" style="flex-basis:260px">
+          <label class="cc-lbl" for="cc-name-<?= $ccE($id) ?>">Name</label>
+          <input type="text" id="cc-name-<?= $ccE($id) ?>" maxlength="40" name="<?= $n('name') ?>" value="<?= $ccE($rule['name'] ?? '') ?>" placeholder="Web UI sign-ins">
+          <p class="cc-help">Letters, digits, space, dot, dash. It names the rule on this page and in syslog.</p>
+        </div>
+      </div>
+      <div class="cc-field">
+        <span class="cc-lbl">When</span>
+        <div class="cc-togs">
+          <?php foreach ($ccKindGroups as $group => [$groupHelp, $kinds]): ?>
+            <span class="cc-tog-g"><?= $ccE($group) ?><small><?= $ccE($groupHelp) ?></small></span>
+            <?php foreach ($kinds as $val => [$label, $tip]): ?>
+              <label class="cc-tog" title="<?= $ccE($tip) ?>"><input type="checkbox" name="<?= $n('kinds') ?>[]" value="<?= $ccE($val) ?>" <?= in_array($val, $rule['kinds'] ?? [], true) ? 'checked' : '' ?>><?= $ccE($label) ?></label>
+            <?php endforeach; ?>
+          <?php endforeach; ?>
+        </div>
+        <p class="cc-help">Pick one or more events. "Any …" covers its whole group. A rule with several kinds fires on each of them.</p>
+      </div>
+      <div class="cc-fields">
+        <div class="cc-field" style="flex-basis:300px;max-width:none">
+          <span class="cc-lbl">Only for protocols</span>
+          <div class="cc-togs">
+            <?php foreach ($ccProtoOptions as $val => $label): ?>
+              <label class="cc-tog" title="<?= $ccE($ccProtoHelp[$val] ?? '') ?>"><input type="checkbox" name="<?= $n('protos') ?>[]" value="<?= $ccE($val) ?>" <?= in_array($val, $rule['protos'] ?? [], true) ? 'checked' : '' ?>><?= $ccE($label) ?></label>
+            <?php endforeach; ?>
+          </div>
+          <p class="cc-help">None ticked: any protocol. Tick one or more to limit the rule to them.</p>
+        </div>
+        <div class="cc-field" style="flex-basis:360px;max-width:none">
+          <span class="cc-lbl">Only from clients</span>
+          <div class="cc-togs">
+            <?php foreach ($ccClientOptions as $val => $label): ?>
+              <label class="cc-tog" title="<?= $ccE($ccClientHelp[$val] ?? '') ?>"><input type="checkbox" name="<?= $n('clients') ?>[]" value="<?= $ccE($val) ?>" <?= in_array($val, $rule['clients'] ?? [], true) ? 'checked' : '' ?>><?= $ccE($label) ?></label>
+            <?php endforeach; ?>
+          </div>
+          <p class="cc-help">None ticked: any client, except this server, its containers and loopback (they never fire a rule unless you tick them).</p>
+        </div>
+      </div>
+      <div class="cc-fields">
+        <div class="cc-field">
+          <label class="cc-lbl" for="cc-ranges-<?= $ccE($id) ?>">Address ranges</label>
+          <input type="text" id="cc-ranges-<?= $ccE($id) ?>" name="<?= $n('ranges') ?>" value="<?= $ccE(implode(' ', $rule['ranges'] ?? [])) ?>" placeholder="192.168.1.0/24 10.0.0.5">
+          <p class="cc-help">CIDR list, space separated. Empty: any address.</p>
+        </div>
+        <div class="cc-field">
+          <label class="cc-lbl" for="cc-user-<?= $ccE($id) ?>">User</label>
+          <input type="text" id="cc-user-<?= $ccE($id) ?>" maxlength="40" name="<?= $n('user') ?>" value="<?= $ccE($rule['user'] ?? '') ?>">
+          <p class="cc-help">Exact user name. Empty: any user.</p>
+        </div>
+      </div>
+      <div class="cc-field">
+        <span class="cc-lbl">Send to</span>
+        <div class="cc-seg cc-seg-radio" role="radiogroup" aria-label="Send to">
+          <?php foreach ($ccSinkOptions as $val => $label): ?>
+            <label><input type="radio" name="<?= $n('sink') ?>" value="<?= $ccE($val) ?>" <?= $sink === $val ? 'checked' : '' ?>><?= $ccE($label) ?></label>
+          <?php endforeach; ?>
+        </div>
+      </div>
+      <div class="cc-fields">
+        <div class="cc-field cc-for-notify" <?= $sink === 'notify' ? '' : 'hidden' ?>>
+          <label class="cc-lbl" for="cc-imp-<?= $ccE($id) ?>">Importance</label>
+          <select id="cc-imp-<?= $ccE($id) ?>" name="<?= $n('importance') ?>">
+            <?php foreach ($ccImportanceOptions as $val => $label): ?>
+              <option value="<?= $ccE($val) ?>" <?= ($rule['importance'] ?? 'normal') === $val ? 'selected' : '' ?>><?= $ccE($label) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <p class="cc-help">Warning and Alert stand out more, and raise the email priority.</p>
+        </div>
+        <div class="cc-field cc-for-script" <?= $sink === 'script' ? '' : 'hidden' ?>>
+          <label class="cc-lbl" for="cc-script-<?= $ccE($id) ?>">Script</label>
+          <select id="cc-script-<?= $ccE($id) ?>" name="<?= $n('script') ?>">
+            <option value="">(choose a file)</option>
+            <?php if ($ccSubsScripts === []): ?>
+              <option value="" disabled>no script in the folder yet</option>
+            <?php else: foreach ($ccSubsScripts as $script): ?>
+              <option value="<?= $ccE($script) ?>" <?= ($rule['script'] ?? '') === $script ? 'selected' : '' ?>><?= $ccE($script) ?></option>
+            <?php endforeach; endif; ?>
+          </select>
+          <p class="cc-help">A file in <code>/boot/config/plugins/unraid-connections/event.d</code>. It runs with bash, gets the event as JSON on its standard input, and stops after 30 s.</p>
+        </div>
+        <div class="cc-field">
+          <label class="cc-lbl" for="cc-cool-<?= $ccE($id) ?>">Cooldown</label>
+          <span class="cc-unit"><input type="number" id="cc-cool-<?= $ccE($id) ?>" min="0" max="1440" name="<?= $n('cooldown') ?>" value="<?= $ccE($rule['cooldown'] ?? 0) ?>"><span>minutes</span></span>
+          <p class="cc-help">Wait this long before the same address fires this rule again. 0: every time.</p>
+        </div>
+      </div>
+      <div class="cc-rule-foot">
+        <?php if ($id !== 'new'): ?>
+          <label class="cc-danger"><input type="checkbox" name="<?= $n('remove') ?>" value="1"> Delete this rule</label>
+        <?php else: ?>
+          <span class="cc-help">The rule is saved with Apply.</span>
+        <?php endif; ?>
+        <button type="button" class="cc-linkbtn cc-close">Close</button>
+      </div>
+    </div>
+    <?php
+};
 ?>
-<style>
-.cc-settings textarea{width:100%;max-width:520px;font-family:ui-monospace,Menlo,Consolas,monospace}
-/* a phone (375 px) has no room for a fixed 360 px field or a long label on one line */
-.cc-settings .cc-wide{width:100%;max-width:360px;box-sizing:border-box}   /* a fixed width sizes the dd itself, so max-width:100% cannot shrink it */
-.cc-settings dt{white-space:normal}
-.cc-settings .cc-adapters label{margin-right:18px;white-space:nowrap}
-.cc-settings .cc-msg-ok{color:#0ca30c;font-weight:bold;margin-left:10px}
-.cc-settings .cc-msg-err{color:#d03b3b;font-weight:bold;margin-left:10px}
-</style>
-<form method="post" class="cc-settings" id="cc-settings-form">
+<link rel="stylesheet" href="<?= $ccBase ?>/assets/cc.css?v=<?= $ccV('assets/cc.css') ?>">
+<link rel="stylesheet" href="<?= $ccBase ?>/assets/cc-settings.css?v=<?= $ccV('assets/cc-settings.css') ?>">
+<form method="post" class="cc-root cc-settings<?= $ccDark ? ' cc-dark' : '' ?>" id="cc-settings-form">
 <input type="hidden" name="csrf_token" value="<?= $ccE($var['csrf_token'] ?? '') ?>">
 <input type="hidden" name="cc_save" value="1">
+<input type="hidden" name="rules_version" value="<?= $ccE(cc_subs_version()) ?>">
 
-<dl><dt>Protocols:</dt><dd class="cc-adapters">
-<?php foreach (['web' => 'Web UI', 'ssh' => 'SSH', 'smb' => 'SMB', 'nfs' => 'NFS', 'vpn' => 'VPN (WireGuard, Tailscale)'] as $ccKey => $ccName): ?>
-  <label><input type="checkbox" name="adapter_<?= $ccKey ?>" value="yes" <?= $ccOn("adapter_$ccKey") ?>> <?= $ccE($ccName) ?></label>
-<?php endforeach; ?>
-</dd></dl>
-<blockquote class="inline_help">Untick a protocol to stop reading it. The page then shows it as "turned off in settings".</blockquote>
+<div class="cc-top">
+  <div class="cc-id">
+    <p class="cc-eyebrow">Connected Clients · settings</p>
+    <p class="cc-sub">What the collector reads, how clients are named, and what happens when something connects.</p>
+  </div>
+  <a href="/Tools/ConnectedClients">Open Connected Clients →</a>
+</div>
 
-<dl><dt>Poll interval (seconds):</dt><dd><input type="number" name="poll_interval" min="2" max="5" value="<?= $ccE($cc['poll_interval']) ?>"></dd></dl>
-<blockquote class="inline_help">How often the collector reads the sources: 2 to 5 seconds. It must stay at 5 seconds or less, so that each new web session gets its client address before Unraid moves its login time.</blockquote>
+<div class="cc-banner <?= $ccSaveResult !== null && !$ccSaveResult['ok'] ? 'cc-bad' : 'cc-ok' ?>" id="cc-msg" role="status" <?= $ccSaveResult === null ? 'hidden' : '' ?>>
+  <span id="<?= $ccSaveResult !== null && !$ccSaveResult['ok'] ? 'cc-save-failed' : 'cc-saved' ?>"><?= $ccE($ccSaveResult['message'] ?? '') ?></span>
+</div>
 
-<dl><dt>Idle limit (minutes):</dt><dd><input type="number" name="idle_limit" min="5" max="1440" value="<?= $ccE($cc['idle_limit']) ?>"></dd></dl>
-<blockquote class="inline_help">A web session with no request for this long changes from Idle to Stale.</blockquote>
+<div class="cc-grid2">
+  <section class="cc-panel" aria-labelledby="cc-h-src">
+    <div class="cc-sec-h"><h2 id="cc-h-src">Sources</h2><p>What the collector reads, every few seconds.</p></div>
+    <div class="cc-field">
+      <span class="cc-lbl">Protocols</span>
+      <div class="cc-sw-row">
+        <?php foreach (['web' => 'Web UI', 'ssh' => 'SSH', 'smb' => 'SMB', 'nfs' => 'NFS', 'vpn' => 'VPN'] as $ccKey => $ccName): ?>
+          <label class="cc-switch"><input type="checkbox" name="adapter_<?= $ccKey ?>" value="yes" <?= $ccOn("adapter_$ccKey") ?>><span class="cc-knob" aria-hidden="true"></span><?= $ccE($ccName) ?></label>
+        <?php endforeach; ?>
+      </div>
+      <p class="cc-help">A protocol that is off shows as "turned off in settings" on the page. VPN covers WireGuard and Tailscale.</p>
+    </div>
+    <div class="cc-fields">
+      <div class="cc-field">
+        <label class="cc-lbl" for="cc-poll">Poll interval</label>
+        <span class="cc-unit"><input type="number" id="cc-poll" name="poll_interval" min="2" max="5" value="<?= $ccE($cc['poll_interval']) ?>"><span>seconds</span></span>
+        <p class="cc-help">2 to 5. Keep it at 5 or less, so a new web session gets its address before Unraid moves its login time.</p>
+      </div>
+      <div class="cc-field">
+        <label class="cc-lbl" for="cc-idle">Idle limit</label>
+        <span class="cc-unit"><input type="number" id="cc-idle" name="idle_limit" min="5" max="1440" value="<?= $ccE($cc['idle_limit']) ?>"><span>minutes</span></span>
+        <p class="cc-help">A web session with no request for this long goes from Idle to Stale.</p>
+      </div>
+      <div class="cc-field">
+        <label class="cc-lbl" for="cc-days">History</label>
+        <span class="cc-unit"><input type="number" id="cc-days" name="history_days" min="1" max="365" value="<?= $ccE($cc['history_days']) ?>"><span>days</span></span>
+        <p class="cc-help">How long sessions, sign-in events and the event log are kept.</p>
+      </div>
+    </div>
+  </section>
 
-<dl><dt>History (days):</dt><dd><input type="number" name="history_days" min="1" max="365" value="<?= $ccE($cc['history_days']) ?>"></dd></dl>
-<blockquote class="inline_help">How long the plugin keeps sessions and sign-in events.</blockquote>
+  <section class="cc-panel" aria-labelledby="cc-h-cli">
+    <div class="cc-sec-h"><h2 id="cc-h-cli">Clients and page</h2><p>How clients are named, and what the page may do.</p></div>
+    <div class="cc-field">
+      <label class="cc-lbl" for="cc-proxy">Proxy ranges</label>
+      <input type="text" id="cc-proxy" name="proxy_ranges" class="cc-wide" value="<?= $ccE($cc['proxy_ranges']) ?>" placeholder="172.16.0.0/12">
+      <p class="cc-help">Addresses in these ranges (CIDR, space separated) are marked "Via proxy": the real client is behind them. The default covers Docker bridge networks.</p>
+    </div>
+    <div class="cc-field">
+      <label class="cc-lbl" for="cc-labels">Client labels</label>
+      <textarea id="cc-labels" name="labels" rows="4" placeholder="192.168.1.20=Living room TV&#10;aa:bb:cc:dd:ee:ff=Backup NAS"><?= $ccE(cc_labels_to_text($cc['labels'])) ?></textarea>
+      <p class="cc-help">One label on each line: an IP or MAC address, "=", and a name. A label replaces the host name on the page and in alerts.</p>
+    </div>
+    <div class="cc-field">
+      <span class="cc-lbl">Actions</span>
+      <label class="cc-switch"><input type="checkbox" name="actions" value="yes" <?= $ccOn('actions') ?>><span class="cc-knob" aria-hidden="true"></span>Show the sign-out, end and close buttons on the page</label>
+      <p class="cc-help">Each action asks for a confirmation. The plugin never signs out your own session.</p>
+    </div>
+  </section>
+</div>
 
-<dl><dt>Proxy ranges:</dt><dd><input type="text" name="proxy_ranges" class="cc-wide" value="<?= $ccE($cc['proxy_ranges']) ?>"></dd></dl>
-<blockquote class="inline_help">Addresses in these ranges (CIDR, separated by spaces) are marked "Via proxy": the real client is behind them. The default covers Docker bridge networks.</blockquote>
+<section class="cc-panel" id="cc-subs" aria-labelledby="cc-h-alerts">
+  <div class="cc-sec-h">
+    <h2 id="cc-h-alerts">Alerts and subscriptions</h2>
+    <span class="cc-sec-m" id="cc-rules-meta"><?= $ccRulesTotal ?> rules, <?= $ccRulesOn ?> on</span>
+    <span class="cc-rule-btns"><?php if ($ccDefaultsMissing > 0): ?><button type="button" class="cc-linkbtn" id="cc-restore-defaults" title="Put back the default rules that are missing">Restore the <?= $ccDefaultsMissing ?> default rule<?= $ccDefaultsMissing === 1 ? '' : 's' ?></button><?php endif; ?><button type="button" class="cc-btn" id="cc-add-rule" aria-controls="cc-rule-new" aria-expanded="false">+ Add a rule</button></span>
+    <p>Each rule watches for events and sends them somewhere: an Unraid notification (Settings → Notifications decides the agents), a syslog line, or a script you write. Local traffic (this server, its containers, loopback) never fires a rule unless the rule names it. Test sends one made-up event through the saved rule, with no reload.</p>
+  </div>
+  <div class="cc-fields">
+    <div class="cc-field">
+      <label class="cc-lbl" for="cc-failed-count">Failed sign-in check</label>
+      <span class="cc-unit"><input type="number" id="cc-failed-count" name="notify_failed_count" min="2" max="100" value="<?= $ccE($cc['notify_failed_count']) ?>"><span>failed sign-ins in</span><input type="number" id="cc-failed-window" name="notify_failed_window" min="1" max="1440" value="<?= $ccE($cc['notify_failed_window']) ?>" aria-label="Window in minutes"><span>minutes</span></span>
+      <p class="cc-help">Web UI and SSH together, from one address. This raises the "Failed sign-ins over the limit" event; the same address raises it again only after the window.</p>
+    </div>
+  </div>
+  <div class="cc-rules">
+    <?php foreach ($ccSubsRules as $ccR):
+        $ccRid = (string) $ccR['id'];
+    ?>
+    <div class="cc-rule" data-id="<?= $ccE($ccRid) ?>">
+      <div class="cc-rule-h">
+        <label class="cc-switch" title="On or off"><input type="checkbox" name="rule[<?= $ccE($ccRid) ?>][on]" value="1" <?= !empty($ccR['on']) ? 'checked' : '' ?>><span class="cc-knob" aria-hidden="true"></span><span class="cc-sr">On</span></label>
+        <div class="cc-rule-t"><b class="cc-rule-name"><?= $ccE($ccR['name']) ?></b><span class="cc-rule-sum" id="cc-sum-<?= $ccE($ccRid) ?>"><?= $ccE($ccRuleSummary($ccR)) ?></span><span class="cc-rule-del" hidden>Deleted on Apply</span></div>
+        <span class="cc-chip"><?= $ccE(['notify' => 'notification', 'syslog' => 'syslog', 'script' => 'script'][$ccR['sink']] ?? $ccR['sink']) ?></span>
+        <span class="cc-rule-last"><?= $ccE($ccLastFired($ccRid)) ?></span>
+        <div class="cc-rule-btns">
+          <button type="button" class="cc-test" data-rule="<?= $ccE($ccRid) ?>">Test</button><span class="cc-test-msg" aria-live="polite"></span>
+          <button type="button" class="cc-linkbtn cc-edit" aria-expanded="false" aria-controls="cc-edit-<?= $ccE($ccRid) ?>">Edit</button>
+        </div>
+      </div>
+      <?php $ccEditor($ccRid, $ccR, false); ?>
+    </div>
+    <?php endforeach; ?>
 
-<dl><dt>Client labels:</dt><dd><textarea name="labels" rows="6" placeholder="192.168.1.20=Living room TV&#10;aa:bb:cc:dd:ee:ff=Backup NAS"><?= $ccE(cc_labels_to_text($cc['labels'])) ?></textarea></dd></dl>
-<blockquote class="inline_help">One label on each line: an IP or MAC address, "=", and a name. A label replaces the host name on the Connected Clients page.</blockquote>
+    <?php if ($ccSubsRules === []): ?>
+      <div class="cc-empty" id="cc-rules-empty">No rule yet. Add a rule to get a notification for every web UI sign-in, or to run a script when a share is used.</div>
+    <?php endif; ?>
 
-<dl><dt>Actions:</dt><dd><label><input type="checkbox" name="actions" value="yes" <?= $ccOn('actions') ?>> Show the buttons that sign out a web UI session, end an SSH session and close an SMB session</label></dd></dl>
-<blockquote class="inline_help">Each action asks for a confirmation first. The plugin never signs out your own session. An SMB client can connect again after a close.</blockquote>
+    <div class="cc-rule cc-new" id="cc-rule-new" data-id="new" hidden>
+      <div class="cc-rule-h">
+        <label class="cc-switch" title="On or off"><input type="checkbox" name="rule[new][on]" value="1" checked><span class="cc-knob" aria-hidden="true"></span><span class="cc-sr">On</span></label>
+        <div class="cc-rule-t"><b class="cc-rule-name" id="cc-name-new-title">New rule</b><span class="cc-rule-sum" id="cc-sum-new">Fill in the fields below, then Apply.</span></div>
+        <span class="cc-chip">new</span>
+        <span class="cc-rule-last"></span>
+        <div class="cc-rule-btns"></div>
+      </div>
+      <?php $ccEditor('new', ['on' => true, 'kinds' => [], 'protos' => [], 'clients' => [], 'ranges' => [], 'user' => '', 'sink' => 'notify', 'importance' => 'normal', 'script' => '', 'cooldown' => 0], true); ?>
+    </div>
+  </div>
+</section>
 
-<dl><dt>Notifications:</dt><dd class="cc-adapters">
-<?php foreach (['notify_new_client' => 'New client', 'notify_failed' => 'Failed sign-ins', 'notify_ssh_public' => 'SSH from the internet'] as $ccKey => $ccName): ?>
-  <label><input type="checkbox" name="<?= $ccKey ?>" value="yes" <?= $ccOn($ccKey) ?>> <?= $ccE($ccName) ?></label>
-<?php endforeach; ?>
-</dd></dl>
-<blockquote class="inline_help">The plugin sends these alerts as Unraid notifications. Settings → Notifications decides where they go (browser, email, other agents). New client: the first connection from an address in the history period. Failed sign-ins: the limit below. SSH from the internet: an SSH sign-in from a public address.</blockquote>
-
-<dl><dt>Failed sign-in limit:</dt><dd><input type="number" name="notify_failed_count" min="2" max="100" value="<?= $ccE($cc['notify_failed_count']) ?>"></dd></dl>
-<dl><dt>Failed sign-in window (minutes):</dt><dd><input type="number" name="notify_failed_window" min="1" max="1440" value="<?= $ccE($cc['notify_failed_window']) ?>"></dd></dl>
-<blockquote class="inline_help">One alert for each address that has this many failed sign-ins (web UI and SSH together) in the window. The same address gets a new alert only after the window.</blockquote>
-
-<dl><dt>&nbsp;</dt><dd>
-  <input type="submit" value="Apply"><input type="button" value="Done" onclick="done()">
-  <input type="submit" name="cc_test_notify" value="Send a test notification">
-  <?php if ($ccTested === true): ?><span class="cc-msg-ok" id="cc-test-sent">A test notification was sent.</span><?php endif; ?>
-  <?php if ($ccTested === false): ?><span class="cc-msg-err" id="cc-test-failed">Unraid's notify script is missing, so no notification was sent.</span><?php endif; ?>
-  <?php if ($ccSaved === true): ?><span class="cc-msg-ok" id="cc-saved">Saved. The collector uses the new settings within a few seconds.</span><?php endif; ?>
-  <?php if ($ccSaved === false): ?><span class="cc-msg-err" id="cc-save-failed">The settings could not be saved. Try again.</span><?php endif; ?>
-  <a href="/Tools/ConnectedClients" style="margin-left:14px">Open Connected Clients</a>
-</dd></dl>
+<div class="cc-actions-bar">
+  <input type="submit" value="Apply" class="cc-btn cc-primary">
+  <input type="button" value="Done" class="cc-btn" onclick="done()">
+  <span class="cc-dirty" id="cc-dirty" hidden>Unsaved changes</span>
+</div>
 </form>
+<script>
+// Settings page behaviour (docs/specs/SETTINGS_PAGE_DESIGN.md): open and close a rule editor, add a
+// rule, show the fields of the chosen sink, keep the row summary in step with the editor, mark a
+// deleted rule, flag unsaved changes, and run the Test buttons through test.php without a reload.
+(function () {
+  'use strict';
+  var form = document.getElementById('cc-settings-form');
+  if (!form) return;
+  var $ = function (sel, root) { return (root || form).querySelector(sel); };
+  var $$ = function (sel, root) { return Array.prototype.slice.call((root || form).querySelectorAll(sel)); };
+  var SINK = { notify: 'Unraid notification', syslog: 'Syslog line', script: 'Run a script' };
+
+  function setOpen(editor, button, open) {
+    editor.hidden = !open;
+    if (button) { button.setAttribute('aria-expanded', String(open)); }
+    var row = editor.closest('.cc-rule');
+    var edit = row ? row.querySelector('.cc-edit') : null;
+    if (edit) edit.textContent = open ? 'Close' : 'Edit';
+  }
+  function summary(editor) {
+    var checked = function (field) { return $$('input[name$="[' + field + '][]"]:checked', editor).map(function (i) { return i.parentNode.textContent.trim(); }); };
+    var kinds = checked('kinds'), protos = checked('protos'), clients = checked('clients');
+    var k = kinds.length > 3 ? kinds.slice(0, 2).join(', ') + ' and ' + (kinds.length - 2) + ' more' : (kinds.join(' or ') || 'no event');
+    var sinkInput = $('input[name$="[sink]"]:checked', editor);
+    var sink = sinkInput ? sinkInput.value : 'notify';
+    var text = SINK[sink] || sink;
+    if (sink === 'notify') { var imp = $('select[name$="[importance]"]', editor); if (imp && imp.value !== 'normal') text += ' (' + imp.value + ')'; }
+    if (sink === 'script') { var sc = $('select[name$="[script]"]', editor); text = sc && sc.value ? 'Run ' + sc.value : 'Run a script (none chosen)'; }
+    var cool = $('input[name$="[cooldown]"]', editor);
+    if (cool && +cool.value > 0) text += ' · at most once in ' + cool.value + ' min';
+    var extra = [];
+    var ranges = $('input[name$="[ranges]"]', editor), user = $('input[name$="[user]"]', editor);
+    if (ranges && ranges.value.trim()) extra.push(ranges.value.trim());
+    if (user && user.value.trim()) extra.push('user ' + user.value.trim());
+    return k + ' · ' + (protos.join(', ') || 'any protocol') + ' · ' + (clients.join(', ') || 'any client') + (extra.length ? ' · ' + extra.join(' · ') : '') + ' → ' + text;
+  }
+  function refresh(editor) {
+    var row = editor.closest('.cc-rule');
+    if (!row) return;
+    var sinkInput = $('input[name$="[sink]"]:checked', editor), sink = sinkInput ? sinkInput.value : 'notify';
+    var forNotify = $('.cc-for-notify', editor), forScript = $('.cc-for-script', editor);
+    if (forNotify) forNotify.hidden = sink !== 'notify';
+    if (forScript) forScript.hidden = sink !== 'script';
+    var sum = row.querySelector('.cc-rule-sum'), name = row.querySelector('.cc-rule-name'), nameInput = $('input[name$="[name]"]', editor);
+    if (sum) sum.textContent = summary(editor);
+    if (name && nameInput && nameInput.value.trim()) name.textContent = nameInput.value.trim();
+    var chip = row.querySelector('.cc-chip');
+    if (chip && row.id !== 'cc-rule-new') chip.textContent = { notify: 'notification', syslog: 'syslog', script: 'script' }[sink] || sink;
+    var del = $('input[name$="[remove]"]', editor), tag = row.querySelector('.cc-rule-del');
+    row.classList.toggle('cc-removed', !!(del && del.checked));
+    if (tag) tag.hidden = !(del && del.checked);
+  }
+  function dirty() { var d = document.getElementById('cc-dirty'); if (d) d.hidden = false; }
+  function banner(ok, text) {
+    var m = document.getElementById('cc-msg');
+    if (!m) return;
+    m.className = 'cc-banner ' + (ok ? 'cc-ok' : 'cc-bad');
+    m.innerHTML = '';
+    var span = document.createElement('span'); span.id = ok ? 'cc-saved' : 'cc-save-failed'; span.textContent = text; m.appendChild(span);
+    m.hidden = false;
+    if (m.getBoundingClientRect().top < 0) m.scrollIntoView({ block: 'nearest' });
+  }
+  // Apply: save in the background, then load the page again with GET so the rows (new ids, summaries)
+  // are fresh and a browser refresh never asks to resend the form. The body goes URL-encoded: a
+  // multipart POST never gets an answer through the webGUI's auth_request path (Forgejo #16).
+  form.addEventListener('submit', function (e) {
+    if (!window.fetch || !window.FormData || !window.URLSearchParams) return;   // no fetch: the normal POST still works
+    e.preventDefault();
+    var apply = form.querySelector('input[type="submit"]');
+    if (apply) apply.disabled = true;
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 20000) : null;
+    fetch('/plugins/unraid-connections/save.php', { method: 'POST', body: new URLSearchParams(new FormData(form)), credentials: 'same-origin', signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { return r.text().then(function (t) { try { return JSON.parse(t); } catch (x) { return { ok: false, message: t ? 'HTTP ' + r.status : 'The webGUI refused the request (security token). Reload the page and try again.' }; } }); })
+      .then(function (res) {
+        if (res.ok) { try { sessionStorage.setItem('cc-saved', res.message || 'Saved.'); } catch (x) { /* no storage */ } window.location.assign(window.location.pathname); return; }
+        banner(false, res.message || 'The settings could not be saved.');
+        if (apply) apply.disabled = false;
+      })
+      .catch(function (x) { banner(false, x && x.name === 'AbortError' ? 'Not saved: the server did not answer in 20 seconds. Try again.' : 'Not saved: ' + (x.message || x)); if (apply) apply.disabled = false; })
+      .then(function () { if (timer) clearTimeout(timer); });
+  });
+  try { var flash = sessionStorage.getItem('cc-saved'); if (flash) { sessionStorage.removeItem('cc-saved'); banner(true, flash); } } catch (x) { /* no storage */ }
+  // The "last fired" column follows the collector: read the snapshot every 10 s and update each row.
+  function refreshFired() {
+    fetch('/plugins/unraid-connections/state.php', { cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var rules = (d && d.notify && d.notify.rules) || [];
+        rules.forEach(function (r) {
+          var row = form.querySelector('.cc-rule[data-id="' + r.id + '"] .cc-rule-last');
+          if (!row) return;
+          if (!r.last) { row.textContent = 'Never fired'; return; }
+          var t = new Date(r.last * 1000);
+          var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+          row.textContent = 'Fired ' + r.fired + ' × · last ' + pad(t.getHours()) + ':' + pad(t.getMinutes()) + ', ' + t.getDate() + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][t.getMonth()];
+        });
+      })
+      .catch(function () { /* the collector is down: the page keeps its last values */ });
+  }
+  setInterval(function () { if (!document.hidden) refreshFired(); }, 10000);
+
+  form.addEventListener('click', function (e) {
+    var t = e.target;
+    var edit = t.closest('.cc-edit');
+    if (edit) { var ed = document.getElementById(edit.getAttribute('aria-controls')); if (ed) setOpen(ed, edit, ed.hidden); return; }
+    var close = t.closest('.cc-close');
+    if (close) { var editor = close.closest('.cc-rule-edit'); var row = editor.closest('.cc-rule'); if (row && row.id === 'cc-rule-new') { row.hidden = true; var add = document.getElementById('cc-add-rule'); if (add) add.setAttribute('aria-expanded', 'false'); } else { setOpen(editor, row.querySelector('.cc-edit'), false); } return; }
+    if (t.closest('#cc-add-rule')) {
+      var nr = document.getElementById('cc-rule-new'), empty = document.getElementById('cc-rules-empty');
+      if (nr) { nr.hidden = false; if (empty) empty.hidden = true; t.closest('#cc-add-rule').setAttribute('aria-expanded', 'true'); var n = $('input[name="rule[new][name]"]'); if (n) n.focus(); }
+      return;
+    }
+    var b = t.closest('.cc-test');
+    if (b) { e.preventDefault(); runTest(b); return; }
+    if (t.closest('#cc-restore-defaults')) {
+      e.preventDefault();
+      var body = new URLSearchParams({ csrf_token: window.csrf_token || (form.querySelector('input[name="csrf_token"]') || {}).value || '', cc_restore_defaults: '1' });
+      fetch('/plugins/unraid-connections/save.php', { method: 'POST', body: body, credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) { if (res.ok) { try { sessionStorage.setItem('cc-saved', res.message || 'Restored.'); } catch (x) { /* no storage */ } window.location.assign(window.location.pathname); } else { banner(false, res.message || 'Not restored.'); } })
+        .catch(function (x) { banner(false, 'Not restored: ' + (x.message || x)); });
+    }
+  });
+  form.addEventListener('input', function (e) {
+    dirty();
+    var editor = e.target.closest('.cc-rule-edit');
+    if (editor) refresh(editor);
+  });
+  form.addEventListener('change', function (e) {
+    dirty();
+    var editor = e.target.closest('.cc-rule-edit');
+    if (editor) refresh(editor);
+    var meta = document.getElementById('cc-rules-meta');
+    if (meta) {
+      var rows = $$('.cc-rule').filter(function (r) { return !r.hidden; });
+      var on = rows.filter(function (r) { var sw = r.querySelector('.cc-rule-h .cc-switch input'); return sw && sw.checked; }).length;
+      meta.textContent = rows.length + ' rules, ' + on + ' on';
+    }
+  });
+  $$('.cc-rule-edit').forEach(refresh);
+
+  function runTest(b) {
+    var msg = b.nextElementSibling;
+    var body = new URLSearchParams({ csrf_token: window.csrf_token || (form.querySelector('input[name="csrf_token"]') || {}).value || '' });
+    body.set('rule', b.dataset.rule || '');
+    b.disabled = true;
+    if (msg) { msg.className = 'cc-test-msg'; msg.textContent = 'Sending…'; }
+    fetch('/plugins/unraid-connections/test.php', { method: 'POST', body: body, credentials: 'same-origin' })
+      .then(function (r) { return r.text().then(function (t) { try { return JSON.parse(t); } catch (x) { return { ok: false, message: t ? 'HTTP ' + r.status : 'The webGUI refused the request (security token). Reload the page and try again.' }; } }); })
+      .then(function (res) { if (msg) { msg.className = 'cc-test-msg ' + (res.ok ? 'cc-msg-ok' : 'cc-msg-err'); msg.textContent = res.message || (res.ok ? 'Done.' : 'Failed.'); } })
+      .catch(function (x) { if (msg) { msg.className = 'cc-test-msg cc-msg-err'; msg.textContent = 'Not sent: ' + (x.message || x); } })
+      .then(function () { b.disabled = false; });
+  }
+}());
+</script>

@@ -123,6 +123,11 @@ log_ok "Files installed to $EMHTTP_DEST."
 RULE=/etc/rsyslog.d/40-unraid-connections.conf
 mkdir -p /var/log/unraid-connections
 chmod 700 /var/log/unraid-connections
+
+# Subscriptions (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md): user scripts for the "script" sink.
+# On flash, so it survives an uninstall (user data); an uninstall never removes it.
+mkdir -p /boot/config/plugins/unraid-connections/event.d
+chmod 755 /boot/config/plugins/unraid-connections/event.d
 RULE_TEXT='# unraid-connections: copy webGUI and sshd sign-in lines to the plugin log (docs/specs/HISTORY.md).
 if ($programname == "webgui" or $programname == "sshd" or $programname == "sshd-session") then {
   action(type="omfile" file="/var/log/unraid-connections/events.log" template="RSYSLOG_TraditionalFileFormat")

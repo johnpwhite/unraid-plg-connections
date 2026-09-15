@@ -27,11 +27,10 @@ defined('CC_DEFAULTS')    || define('CC_DEFAULTS', [
     'adapter_vpn'   => 'yes',
     'proxy_ranges'  => '172.16.0.0/12',  // Docker bridge ranges
     'labels'        => '',               // "ip-or-mac=name" pairs separated by ';'
-    'notify_new_client'    => 'yes',     // NOTIFICATIONS.md
-    'notify_failed'        => 'yes',
+    // NOTIFICATIONS.md: the threshold of the failed sign-in check. The three alert switches of
+    // earlier releases are now the default rules in subscriptions.json (cc_subs_seed).
     'notify_failed_count'  => '5',       // failed sign-ins, 2-100
     'notify_failed_window' => '10',      // minutes, 1-1440
-    'notify_ssh_public'    => 'yes',
     'actions'              => 'yes',     // ACTIONS.md: the sign-out, end and close buttons
 ]);
 
@@ -57,7 +56,7 @@ function cc_config_sanitize(array $in): array
     $out['history_days']  = $clamp($out['history_days'], 1, 365, CC_DEFAULTS['history_days']);
     $out['notify_failed_count']  = $clamp($out['notify_failed_count'], 2, 100, CC_DEFAULTS['notify_failed_count']);
     $out['notify_failed_window'] = $clamp($out['notify_failed_window'], 1, 1440, CC_DEFAULTS['notify_failed_window']);
-    foreach (['notify_new_client', 'notify_failed', 'notify_ssh_public', 'actions'] as $k) {
+    foreach (['actions'] as $k) {
         $out[$k] = in_array($out[$k], ['yes', 'no'], true) ? $out[$k] : CC_DEFAULTS[$k];
     }
     foreach (CC_ADAPTERS as $a) {
@@ -115,7 +114,7 @@ function cc_settings_from_post(array $post): array
     foreach (CC_ADAPTERS as $a) {
         $in["adapter_$a"] = (($post["adapter_$a"] ?? '') === 'yes') ? 'yes' : 'no';
     }
-    foreach (['notify_new_client', 'notify_failed', 'notify_ssh_public', 'actions'] as $k) {
+    foreach (['actions'] as $k) {
         $in[$k] = (($post[$k] ?? '') === 'yes') ? 'yes' : 'no';
     }
     return cc_config_sanitize($in);

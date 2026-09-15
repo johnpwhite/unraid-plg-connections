@@ -101,21 +101,31 @@ function cc_history_flush(SQLite3 $db, string $flash = CC_HISTORY_FLASH): bool
     }
 }
 
-/** Store sign-in events. Duplicates (same time, protocol, type, user, IP) are ignored. Returns the number of new rows. */
-function cc_history_record_events(SQLite3 $db, array $events): int
+/**
+ * Store sign-in events. Duplicates (same time, protocol, type, user, IP) are ignored. Returns the
+ * number of new rows. $inserted, when given, is set to the rows that were actually new (for
+ * cc_ledger_signin_events()).
+ */
+function cc_history_record_events(SQLite3 $db, array $events, ?array &$inserted = null): int
 {
     $new = 0;
+    $inserted = [];
     $st = $db->prepare('INSERT OR IGNORE INTO events (t, proto, type, user, ip, detail) VALUES (:t, :p, :ty, :u, :ip, :d)');
     $db->exec('BEGIN');
     foreach ($events as $e) {
-        $st->bindValue(':t', (int) $e['t'], SQLITE3_INTEGER);
-        $st->bindValue(':p', (string) $e['proto']);
-        $st->bindValue(':ty', (string) $e['type']);
-        $st->bindValue(':u', (string) ($e['user'] ?? ''));
-        $st->bindValue(':ip', (string) ($e['ip'] ?? ''));
-        $st->bindValue(':d', (string) ($e['detail'] ?? ''));
+        $row = ['t' => (int) $e['t'], 'proto' => (string) $e['proto'], 'type' => (string) $e['type'],
+            'user' => (string) ($e['user'] ?? ''), 'ip' => (string) ($e['ip'] ?? ''), 'detail' => (string) ($e['detail'] ?? '')];
+        $st->bindValue(':t', $row['t'], SQLITE3_INTEGER);
+        $st->bindValue(':p', $row['proto']);
+        $st->bindValue(':ty', $row['type']);
+        $st->bindValue(':u', $row['user']);
+        $st->bindValue(':ip', $row['ip']);
+        $st->bindValue(':d', $row['detail']);
         $st->execute();
-        $new += $db->changes();
+        if ($db->changes() > 0) {
+            $new++;
+            $inserted[] = $row;
+        }
         $st->reset();
     }
     $db->exec('COMMIT');

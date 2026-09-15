@@ -7,7 +7,9 @@ Open the page at **Tools → Connected Clients**, and the settings at **Settings
   Then look for `unraid-connections` lines in `/var/log/syslog`.
 - **A web session shows "IP inferred" or "IP unknown".** Unraid does not store the client address of a session. The plugin takes it from the sign-in line while the session is new. For a session that started before the plugin, the address is inferred or unknown.
 - **The status line says "polling", not "nchan push".** A proxy in front of the webGUI can block websockets. The page still reads the data every few seconds.
-- **No notification arrives.** Check **Settings → Notifications** (the agents), then the Notifications switches of the plugin. Use **Send a test notification** on the settings page.
+- **No notification arrives.** Check **Settings → Notifications** (the agents), then the rule's switch under **Alerts and subscriptions** on the settings page. Press **Test** on the rule.
+- **I want a notification (or a script) for every web UI sign-in.** Add a rule under **Event subscriptions** on the settings page: kind "Session started", protocol "Web UI", sink "Unraid notification". A script sink runs a file from `/boot/config/plugins/unraid-connections/event.d/` with the event as JSON on its standard input.
+- **Another tool wants the events.** Read `/plugins/unraid-connections/events.php?since=0` (signed in), or on the server `php /usr/local/emhttp/plugins/unraid-connections/events.php --since=0`. Keep the `next_seq` value and pass it as `since` next time.
 - **An action button is missing.** Your own session has no Sign out button (it shows "This browser"). An ended session has no button. The setting **Actions** can hide all buttons.
 
 ## Diagnostics

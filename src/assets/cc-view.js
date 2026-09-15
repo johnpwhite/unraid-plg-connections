@@ -3,8 +3,9 @@
  *   <name>cc-view</name>
  *   <description>Connected Clients page: takes each snapshot from the nchan channel
  *   connections (docs/specs/LIVE_UPDATES.md), or from state.php when nchan is silent, and renders the
- *   protocol strip, "right now", the timeline, the sign-in events and the sources. Each
- *   viewer's toggles are kept in localStorage.</description>
+ *   protocol strip, "right now", the timeline, the sign-in events, the event log
+ *   (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md) and the sources. Each viewer's toggles are kept
+ *   in localStorage.</description>
  *   <dependencies>cc-model.js</dependencies>
  * </module_context>
  */
@@ -20,7 +21,7 @@
   const RC = '/usr/local/emhttp/plugins/unraid-connections/scripts/rc.unraid-connections';
 
   const loadPrefs = () => { try { return JSON.parse(localStorage.getItem('cc-prefs') || '{}') || {}; } catch (e) { return {}; } };
-  const prefs = Object.assign({ win: 72, group: 'client', local: false, stale: false, ev: 'all', evAll: false }, loadPrefs());
+  const prefs = Object.assign({ win: 72, group: 'client', local: false, stale: false, ev: 'all', evAll: false, lg: 'all', lgAll: false }, loadPrefs());
   const savePrefs = () => { try { localStorage.setItem('cc-prefs', JSON.stringify(prefs)); } catch (e) { /* storage blocked */ } };
 
   let M = null;
@@ -166,9 +167,12 @@
       D.history && D.history.ok
         ? [true, 'History database', `${plural(D.events.length, 'event')}, ${D.history.days} days · ${plural(D.history.ended.length, 'ended session')}, 72 h${D.history.restored ? ' · restored from flash at start' : ''}`]
         : [false, 'History database', 'not available; events come from syslog (7 days)'],
-      D.notify && D.notify.on.length
-        ? [true, 'Notifications', `${D.notify.on.length} of 3 kinds on · ${plural(D.notify.sent_24h, 'alert')} in 24 h`]
-        : [false, 'Notifications', D.notify ? 'all turned off in settings' : 'not available'],
+      D.ledger && D.ledger.ok
+        ? [true, 'Event log', `${D.ledger.count_24h} events in 24 h · seq ${D.ledger.head}`]
+        : [false, 'Event log', 'not available'],
+      D.notify && Array.isArray(D.notify.rules)
+        ? [D.notify.rules.some((r) => r.on), 'Alerts and rules', `${D.notify.rules.filter((r) => r.on).length} of ${D.notify.rules.length} rules on · ${plural(D.notify.sent_24h, 'alert')} in 24 h`]
+        : [false, 'Subscriptions', 'not available'],
       [true, 'Live sockets (ss)', `${(w.live || []).reduce((a, l) => a + l.connections, 0)} web, ${D.ssh.sessions.filter((s) => s.state === 'active').length} SSH, ${D.nfs.tcp_peers.length} NFS`],
       [w.nchan.subscribers != null, 'nchan status', `${w.nchan.subscribers ?? '?'} subscribers, ${w.nchan.channels ?? '?'} channels`],
       [D.smb.available, 'smbstatus', D.smb.available ? `Samba ${D.smb.version}, ${plural(D.smb.sessions.length, 'session')}` : 'not available'],
@@ -256,6 +260,68 @@
     $('cc-ev-more').textContent = prefs.evAll ? 'Show the latest 20' : `Show all ${ev.length}`;
   }
 
+  // Event log (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md): the ledger the collector writes, one
+  // typed row per change. Kinds group into five filters; each kind has a fixed label.
+  const LG_KEYS = ['all', 'session', 'signin', 'alert', 'source', 'action'];
+  const LG_LABEL = {
+    'session.started': 'Session started', 'session.ended': 'Session ended',
+    'signin.ok': 'Signed in', 'signin.failed': 'Failed sign-in', signout: 'Signed out',
+    'client.new': 'New client', 'signin.threshold': 'Failed sign-ins over the limit', 'signin.public': 'SSH from the internet',
+    'source.unavailable': 'Source unavailable', 'source.available': 'Source available', 'action.taken': 'Action',
+  };
+  const LG_BAD = new Set(['signin.failed', 'client.new', 'signin.threshold', 'signin.public']);
+  const lgGroup = (kind) => {
+    if (kind.startsWith('session.')) return 'session';
+    if (kind === 'signin.ok' || kind === 'signin.failed' || kind === 'signout') return 'signin';
+    if (kind === 'client.new' || kind === 'signin.threshold' || kind === 'signin.public') return 'alert';
+    if (kind.startsWith('source.')) return 'source';
+    if (kind === 'action.taken') return 'action';
+    return null;
+  };
+  const lgLabelHtml = (kind) => {
+    const label = LG_LABEL[kind] || kind;
+    return LG_BAD.has(kind)
+      ? `<span class="cc-bad"><svg viewBox="0 0 12 12" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg>${esc(label)}</span>`
+      : esc(label);
+  };
+  const lgDetails = (e) => {
+    if (e.kind === 'client.new' || e.kind === 'signin.threshold' || e.kind === 'signin.public') return e.summary || '';
+    const d = e.data || {}, bits = [];
+    if (d.via) bits.push(d.via);
+    if (d.detail) bits.push(d.detail);
+    if (d.shares) bits.push(Array.isArray(d.shares) ? d.shares.join(', ') : d.shares);
+    if (d.duration != null) bits.push(M.dur(d.duration));
+    if (d.user || e.user) bits.push(d.user || e.user);
+    return bits.join(' · ');
+  };
+  function renderLedger() {
+    const thead = `<thead><tr><th>Time (${esc(M.zone)})</th><th>Event</th><th>Protocol</th><th>Client</th><th>Details</th></tr></thead>`;
+    const recent = (M.D.ledger && M.D.ledger.recent) || null;
+    for (const k of LG_KEYS) { const el = $('cc-n-lg-' + k); if (el) el.textContent = ''; }
+    if (!recent) {
+      $('cc-ledger-table').innerHTML = `${thead}<tbody><tr><td colspan="5" class="d">The event log is not available (the history database is off).</td></tr></tbody>`;
+      $('cc-lg-count').textContent = '';
+      $('cc-lg-more').hidden = true;
+      return;
+    }
+    const base = recent.filter((e) => prefs.local || !M.isLocal(e.ip));
+    const counts = { all: base.length, session: 0, signin: 0, alert: 0, source: 0, action: 0 };
+    for (const e of base) { const g = lgGroup(e.kind); if (g) counts[g] += 1; }
+    for (const k of LG_KEYS) { const el = $('cc-n-lg-' + k); if (el) el.textContent = counts[k]; }
+    const ev = prefs.lg === 'all' ? base : base.filter((e) => lgGroup(e.kind) === prefs.lg);
+    const shown = prefs.lgAll ? ev : ev.slice(0, 20);
+    const body = shown.map((e) => {
+      const proto = ORDER.includes(e.proto) ? protoHtml(e.proto) : `<code>${esc(e.proto || '—')}</code>`;
+      const d = e.data || {}, client = d.client || M.cname(e.ip);
+      return `<tr><td class="t">${esc(M.dayLabel(e.t))} ${M.hms(e.t)}</td><td>${lgLabelHtml(e.kind)}</td><td>${proto}</td>`
+        + `<td><b>${esc(client)}</b> <code>${esc(e.ip || '—')}</code></td><td class="d">${esc(lgDetails(e))}</td></tr>`;
+    }).join('');
+    $('cc-ledger-table').innerHTML = `${thead}<tbody>${body || '<tr><td colspan="5" class="d">No events match this filter.</td></tr>'}</tbody>`;
+    $('cc-lg-count').textContent = `Showing ${shown.length} of ${ev.length}${prefs.local ? '' : ' · local traffic hidden'}`;
+    $('cc-lg-more').hidden = ev.length <= 20;
+    $('cc-lg-more').textContent = prefs.lgAll ? 'Show the latest 20' : `Show all ${ev.length}`;
+  }
+
   // Real failures only; a service that is off or turned off in settings shows in its cell (SOURCE_STATUS.md).
   function renderSourceBanner() {
     const bad = Object.entries(M.sources).filter(([, v]) => v && v.state === 'unavailable');
@@ -277,6 +343,7 @@
     renderHead(); renderSourceBanner(); renderStrip(); renderRoster(); renderSources();
     if (force || !tlBusy) renderTimeline();
     renderEvents();
+    renderLedger();
   }
 
   root.addEventListener('click', (e) => {
@@ -285,10 +352,15 @@
     const hb = e.target.closest('[data-history]');
     if (hb) { toggleHistory(hb.dataset.history); return; }
     const b = e.target.closest('button[data-pref]');
-    if (b) { const k = b.dataset.pref; prefs[k] = k === 'win' ? +b.dataset.val : b.dataset.val; if (k === 'ev') prefs.evAll = false; savePrefs(); render(true); return; }
+    if (b) {
+      const k = b.dataset.pref; prefs[k] = k === 'win' ? +b.dataset.val : b.dataset.val;
+      if (k === 'ev') prefs.evAll = false; else if (k === 'lg') prefs.lgAll = false;
+      savePrefs(); render(true); return;
+    }
     const s = e.target.closest('[data-set]');
     if (s) { prefs[s.dataset.set] = true; savePrefs(); render(true); return; }
     if (e.target.closest('#cc-ev-more')) { prefs.evAll = !prefs.evAll; savePrefs(); if (M) renderEvents(); }
+    if (e.target.closest('#cc-lg-more')) { prefs.lgAll = !prefs.lgAll; savePrefs(); if (M) renderLedger(); }
   });
   root.addEventListener('change', (e) => {
     const i = e.target.closest('input[data-pref]');

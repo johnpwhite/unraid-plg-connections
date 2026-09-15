@@ -7,12 +7,13 @@
  *   session or close an SMB session. local_prepend.php checks the csrf_token of each POST
  *   before this file runs; nginx auth_request protects the URL. Every request is checked
  *   against the latest snapshot and the process table (cc_action_plan).</description>
- *   <dependencies>include/cc-actions.php, include/cc-config.php</dependencies>
+ *   <dependencies>include/cc-actions.php, include/cc-config.php, include/cc-ledger.php</dependencies>
  * </module_context>
  */
 
 require_once __DIR__ . '/include/cc-actions.php';
 require_once __DIR__ . '/include/cc-config.php';
+require_once __DIR__ . '/include/cc-ledger.php';
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -44,5 +45,12 @@ $actor = 'the webGUI from ' . (filter_var($_SERVER['REMOTE_ADDR'] ?? '', FILTER_
 $res = cc_action_run($plan, $actor);
 if (!$res['ok']) {
     http_response_code(409);
+} else {
+    try {
+        $done = ['web_logout' => 'Signed out', 'ssh_end' => 'Ended', 'smb_close' => 'Closed'][$plan['action']] ?? 'Done';
+        cc_ledger_append_direct([cc_ledger_action_event($plan, $actor, $done, time())]);
+    } catch (Throwable $e) {
+        // Best-effort: the action already succeeded; the ledger is not on the critical path.
+    }
 }
 echo json_encode($res);

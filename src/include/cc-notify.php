@@ -141,10 +141,12 @@ function cc_notify_clean(string $s, int $max = 64): string
 }
 
 /**
- * The alerts that are due for this poll, as [['subject', 'description', 'importance'], ...].
- * The settings turn each kind on or off; the alerts table stops a second copy.
+ * The three detections (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md) as ledger events (`client.new`,
+ * `signin.threshold`, `signin.public`), with the cooldown recorded now. Every detection always
+ * runs: the default rules (cc_subs_defaults) decide whether a notification goes out.
+ * cc_notify_alerts() is a thin map from these events to the old alert shape.
  */
-function cc_notify_alerts(SQLite3 $db, array $config, array $newIps, array $events, array $clients, int $now, int $since): array
+function cc_notify_events(SQLite3 $db, array $config, array $newIps, array $events, array $clients, int $now, int $since): array
 {
     $out = [];
     $name = static function (string $ip) use ($clients): string {
@@ -152,40 +154,69 @@ function cc_notify_alerts(SQLite3 $db, array $config, array $newIps, array $even
         return $n === $ip || $n === '' ? $ip : "$n ($ip)";
     };
     $days = (int) ($config['history_days'] ?? 30);
-    if (($config['notify_new_client'] ?? 'yes') === 'yes') {
+    {
         foreach ($newIps as $ip => $n) {
             if (!cc_notify_due($db, 'new', (string) $ip, $now, $days * 86400)) {
                 continue;
             }
             $what = CC_NOTIFY_WHAT[$n['proto']] ?? 'connection';
-            $user = $n['user'] !== null && $n['user'] !== '' ? ' as ' . cc_notify_clean((string) $n['user'], 32) : '';
-            $out[] = ['subject' => 'New client: ' . $name((string) $ip),
-                'description' => "First $what from $ip in $days days$user.", 'importance' => 'normal'];
+            $userTxt = $n['user'] !== null && $n['user'] !== '' ? ' as ' . cc_notify_clean((string) $n['user'], 32) : '';
+            $out[] = [
+                't' => $now, 'kind' => 'client.new', 'proto' => (string) $n['proto'], 'ip' => (string) $ip,
+                'user' => $n['user'] !== null ? (string) $n['user'] : '',
+                'summary' => 'New client: ' . $name((string) $ip),
+                'data' => ['description' => "First $what from $ip in $days days$userTxt.", 'importance' => 'normal',
+                    'client' => $name((string) $ip), 'first_proto' => (string) $n['proto']],
+            ];
         }
     }
-    if (($config['notify_failed'] ?? 'yes') === 'yes') {
+    {
         $window = (int) ($config['notify_failed_window'] ?? 10) * 60;
         foreach (cc_notify_failed($db, $now - $window, (int) ($config['notify_failed_count'] ?? 5)) as $ip => $f) {
             if (!cc_notify_due($db, 'failed', (string) $ip, $now, $window)) {
                 continue;
             }
             $protos = str_replace(['web', 'ssh', ','], ['web UI', 'SSH', ', '], $f['protos']);
-            $out[] = ['subject' => "{$f['n']} failed sign-ins from " . $name((string) $ip),
-                'description' => "{$f['n']} failed sign-ins ($protos) from $ip in " . ($window / 60) . ' minutes. Users: ' . cc_notify_clean($f['users']) . '.',
-                'importance' => 'warning'];
+            $out[] = [
+                't' => $now, 'kind' => 'signin.threshold', 'proto' => '', 'ip' => (string) $ip, 'user' => '',
+                'summary' => "{$f['n']} failed sign-ins from " . $name((string) $ip),
+                'data' => ['description' => "{$f['n']} failed sign-ins ($protos) from $ip in " . ($window / 60) . ' minutes. Users: ' . cc_notify_clean($f['users']) . '.',
+                    'importance' => 'warning', 'count' => $f['n'], 'window' => (int) ($window / 60),
+                    'users' => cc_notify_clean($f['users']), 'protos' => $f['protos']],
+            ];
         }
     }
-    if (($config['notify_ssh_public'] ?? 'yes') === 'yes') {
+    {
         foreach (cc_notify_ssh_public($events, $clients, $since) as $e) {
             $key = $e['t'] . '|' . $e['ip'] . '|' . ($e['user'] ?? '');
             if (!cc_notify_due($db, 'ssh_public', $key, $now, 7 * 86400)) {
                 continue;
             }
-            $how = isset($e['detail']) && $e['detail'] !== '' ? ' with ' . cc_notify_clean((string) $e['detail'], 24) : '';
-            $out[] = ['subject' => 'SSH sign-in from the internet: ' . $e['ip'],
-                'description' => 'User ' . cc_notify_clean((string) ($e['user'] ?? '?'), 32) . " signed in over SSH from {$e['ip']}$how at " . date('H:i', (int) $e['t']) . '.',
-                'importance' => 'alert'];
+            $detail = (string) ($e['detail'] ?? '');
+            $how = $detail !== '' ? ' with ' . cc_notify_clean($detail, 24) : '';
+            $out[] = [
+                't' => (int) $e['t'], 'kind' => 'signin.public', 'proto' => 'ssh', 'ip' => (string) $e['ip'],
+                'user' => (string) ($e['user'] ?? ''),
+                'summary' => 'SSH sign-in from the internet: ' . $e['ip'],
+                'data' => ['description' => 'User ' . cc_notify_clean((string) ($e['user'] ?? '?'), 32) . " signed in over SSH from {$e['ip']}$how at " . date('H:i', (int) $e['t']) . '.',
+                    'importance' => 'alert', 'detail' => $detail],
+            ];
         }
+    }
+    return $out;
+}
+
+/**
+ * The alerts that are due for this poll, as [['subject', 'description', 'importance'], ...]. A
+ * thin map over cc_notify_events(): the settings and the cooldown gate is already applied there.
+ */
+function cc_notify_alerts(SQLite3 $db, array $config, array $newIps, array $events, array $clients, int $now, int $since): array
+{
+    $out = [];
+    foreach (cc_notify_events($db, $config, $newIps, $events, $clients, $now, $since) as $e) {
+        $data = is_array($e['data'] ?? null) ? $e['data'] : [];
+        $out[] = ['subject' => (string) $e['summary'], 'description' => (string) ($data['description'] ?? ''),
+            'importance' => (string) ($data['importance'] ?? 'normal')];
     }
     return $out;
 }

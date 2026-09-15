@@ -1,8 +1,12 @@
 <?xml version='1.0' standalone='yes'?>
 
-<PLUGIN name="unraid-connections" author="John White" version="2026.09.11.14" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/" icon="unraid-connections.png">
+<PLUGIN name="unraid-connections" author="John White" version="2026.09.15.08" launch="Tools/ConnectedClients" pluginURL="https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/unraid-connections.plg" min="7.2.0" support="https://forums.unraid.net/topic/200548-plugin-support-unraid-plugin-to-view-in-near-real-time-what-and-who-is-connected-to-your-core-host-services/" icon="unraid-connections.png">
 
 <CHANGES>
+## 2026.09.15.08
+- Feat: an event log and notification rules. Every session start and end, sign-in, alert, source change and action now goes into an event log on the page. Turn any of these into an Unraid notification, a syslog line, or your own script — for example, every web UI sign-in. Other tools can also read the events, through events.php or the live push channel.
+- Improve: the settings page is redone. Three clear sections — Sources, Clients and page, and Alerts and subscriptions. The built-in alerts and your own rules sit in one list, each with an on/off switch, a one-line summary, and Test and Edit buttons. The rule editor explains what each choice does, and the whole page fits a phone screen.
+- Improve: settings save and test in the background. There is no more page reload, and no "resend this form?" prompt after a save.
 ## 2026.09.11.14
 - Feat: a settings page at Settings, User Utilities, Connected Clients. Turn each protocol on or off, set the poll interval and the idle limit, name your proxy ranges, and give your clients your own labels.
 - Feat: 30 days of history that stays after a reboot. The page lists the sign-in events of the whole period, the timeline keeps ended sessions, and each client has a History button.
@@ -22,9 +26,9 @@
 <ICON>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src/unraid-connections.png</ICON>
 
 <!-- 1. SOURCE BUNDLE: cached on flash with the version in its name, so each version downloads once. -->
-<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.11.14.tar.gz">
+<FILE Name="/boot/config/plugins/unraid-connections/src-2026.09.15.08.tar.gz">
 <URL>https://raw.githubusercontent.com/johnpwhite/unraid-plg-connections/main/src.tar.gz</URL>
-<SHA256>068ec708ac34486e57ff588c7dd001be1d6e419408fa7bca3e58961034ef6024</SHA256>
+<SHA256>ee56fabfb35635df3f16fe2ada925760ae0ce74c2538ab3c67b03c5f80617f6a</SHA256>
 </FILE>
 
 <!-- 2. INSTALL: run the install engine from the archive. The CI deploy stage runs the same engine. -->
@@ -32,7 +36,7 @@
 <INLINE>
 #!/bin/bash
 NAME="unraid-connections"
-VERSION="2026.09.11.14"
+VERSION="2026.09.15.08"
 CFG="/boot/config/plugins/$NAME"
 ARCHIVE="$CFG/src-$VERSION.tar.gz"
 STAGE=""

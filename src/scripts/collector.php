@@ -8,9 +8,10 @@
  *   client IP of each webGUI session from the time the session is new, in session-ips.json.
  *   A non-blocking lock on /tmp (never FUSE) stops a second copy. It reloads settings.ini
  *   when the file changes, so a settings save needs no restart (docs/specs/SETTINGS.md).
- *   Each poll also goes into the history database (HISTORY.md) and is checked for alerts
- *   (NOTIFICATIONS.md).</description>
- *   <dependencies>../include/cc-snapshot.php, ../include/cc-history.php, ../include/cc-notify.php</dependencies>
+ *   Each poll also goes into the history database (HISTORY.md), is checked for alerts
+ *   (NOTIFICATIONS.md), and is turned into ledger events that user subscriptions can match
+ *   (EVENTS_AND_SUBSCRIPTIONS.md).</description>
+ *   <dependencies>../include/cc-snapshot.php, ../include/cc-history.php, ../include/cc-notify.php, ../include/cc-ledger.php, ../include/cc-subs.php</dependencies>
  * </module_context>
  */
 
@@ -19,6 +20,8 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/include/cc-snapshot.php';
 require_once dirname(__DIR__) . '/include/cc-history.php';
 require_once dirname(__DIR__) . '/include/cc-notify.php';
+require_once dirname(__DIR__) . '/include/cc-ledger.php';
+require_once dirname(__DIR__) . '/include/cc-subs.php';
 
 $run = '/tmp/unraid-connections';
 
@@ -44,6 +47,7 @@ $db = null;
 try {
     $db = cc_history_open();
     cc_notify_schema($db);
+    cc_ledger_schema($db);
 } catch (Throwable $e) {
     exec('logger -t unraid-connections ' . escapeshellarg('history database unavailable: ' . $e->getMessage()));
 }
@@ -57,6 +61,15 @@ $lastFlush = time();
 $lastPrune = 0;
 $flushSig = '';
 $flushWarned = false;
+// Events and subscriptions (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md). The first poll after a
+// start only seeds the live-session and source sets (R9): it raises no session/source event.
+$firstPoll = true;
+$prevLive = [];
+$prevSources = [];
+cc_subs_seed(is_readable(CC_CONFIG_FILE) ? (@parse_ini_file(CC_CONFIG_FILE) ?: []) : []);   // the three default rules, once
+$rules = cc_subs_read();
+$rulesMtime = (int) @filemtime(CC_SUBS_FILE);
+$subsState = cc_subs_state_read();
 // Copy to flash only when sessions or events changed (last_seen-only updates do not count: flash wear).
 // A failed copy (flash full or read-only) is logged once; history stays in RAM.
 $flush = static function () use (&$db, &$lastFlush, &$flushSig, &$flushWarned): void {
@@ -104,30 +117,58 @@ while (is_file(__FILE__)) {
         $cfgMtime = $m;
         exec('logger -t unraid-connections ' . escapeshellarg('collector reloaded the settings'));
     }
+    clearstatcache(true, CC_SUBS_FILE);
+    $rm = (int) @filemtime(CC_SUBS_FILE);
+    if ($rm !== $rulesMtime) {   // subscriptions.json saved: reload without a restart
+        $rules = cc_subs_read();
+        $rulesMtime = $rm;
+    }
     $interval = (int) $config['poll_interval'];
     try {
         $snap = cc_snapshot($state, $config);
         if ($db instanceof SQLite3) {
             $poll++;
             $now = (int) $snap['generated_at'];
+            $host = (string) ($snap['host']['name'] ?? '');
+            $clients = $snap['clients'] ?? [];
             [$logEvents] = cc_parse_syslog(cc_events_log_read($state), $now);
             $newEvents = array_merge($snap['events'], $logEvents);
-            cc_history_record_events($db, $newEvents);
+            $inserted = null;
+            cc_history_record_events($db, $newEvents, $inserted);
             $items = cc_history_session_items($snap, $now);
             cc_history_record_sessions($db, $items, $poll);
-            $newIps = cc_notify_new_clients($items, $newEvents, $known, $snap['clients'] ?? []);
+            $newIps = cc_notify_new_clients($items, $newEvents, $known, $clients);
             $known += array_fill_keys(array_keys($newIps), true);
-            if (!$seedOnly) {
-                foreach (cc_notify_alerts($db, $config, $newIps, $newEvents, $snap['clients'] ?? [], $now, $alertSince) as $alert) {
-                    cc_notify_send($alert);
-                }
+
+            // Events and subscriptions (docs/specs/EVENTS_AND_SUBSCRIPTIONS.md). The seed poll
+            // (first after a start, or the first with a brand-new database) raises no
+            // session/source/detection event, so a restart never re-fires them (R9).
+            $nowLive = cc_ledger_live($items);
+            $sessionEvents = $firstPoll ? [] : cc_ledger_session_events($prevLive, $nowLive, $clients, $host, $now);
+            $signinEvents = cc_ledger_signin_events($inserted ?? [], $clients, $host, $alertSince);
+            $notifyEvents = $seedOnly ? [] : cc_notify_events($db, $config, $newIps, $newEvents, $clients, $now, $alertSince);
+            $sourceEvents = cc_ledger_source_events($prevSources, $snap['sources'] ?? []);
+            $pollEvents = array_merge($sessionEvents, $signinEvents, $notifyEvents, $sourceEvents);
+            $appended = cc_ledger_append($db, $pollEvents);
+            if ($appended !== []) {
+                cc_ledger_publish($appended);
             }
+            $subsBefore = json_encode($subsState);
+            cc_subs_dispatch($db, $rules, $appended, $clients, $now, $subsState);
+            if (json_encode($subsState) !== $subsBefore) {
+                cc_subs_state_write($subsState);
+            }
+            $prevLive = $nowLive;
+            $prevSources = $snap['sources'] ?? [];
+            $firstPoll = false;
+
             $seedOnly = false;
             $alertSince = $now - 60;   // overlap one minute; the alerts table stops a second copy
             $days = (int) $config['history_days'];
             if ($now - $lastPrune >= 3600) {
                 cc_history_prune($db, $days, $now);
                 cc_notify_prune($db, $now);
+                cc_ledger_prune($db, $days, $now);
                 $lastPrune = $now;
             }
             $snap['events'] = array_values(array_filter(cc_history_events($db, $now - $days * 86400, 2000),
@@ -141,16 +182,29 @@ while (is_file(__FILE__)) {
                 'ended'      => array_values(array_filter(cc_history_ended($db, $now - 72 * 3600, null, 2000),
                     static fn($h) => !isset($present[$h['proto'] . '|' . $h['skey']]))),
             ];
+            $ledgerHead = cc_ledger_head($db);
+            $snap['ledger'] = [
+                'ok'        => true,
+                'head'      => $ledgerHead['head'],
+                'oldest'    => $ledgerHead['oldest'],
+                'count_24h' => $ledgerHead['count_24h'],
+                'recent'    => cc_ledger_recent($db, 200),
+            ];
             $snap['notify'] = [
-                'on'       => array_values(array_filter(['new_client', 'failed', 'ssh_public'], static fn($k) => ($config["notify_$k"] ?? 'yes') === 'yes')),
                 'sent_24h' => (int) $db->querySingle('SELECT COUNT(*) FROM alerts WHERE t >= ' . ($now - 86400)),
+                'rules'    => array_map(static function (array $r) use ($subsState): array {
+                    $st = $subsState[$r['id']] ?? [];
+                    return ['id' => $r['id'], 'name' => $r['name'], 'on' => $r['on'], 'sink' => $r['sink'],
+                        'last' => $st['last'] ?? null, 'fired' => (int) ($st['fired'] ?? 0)];
+                }, $rules),
             ];
             if ($now - $lastFlush >= 1800) {
                 $flush();
             }
         } else {
             $snap['history'] = ['ok' => false, 'ended' => []];
-            $snap['notify'] = ['on' => [], 'sent_24h' => 0];   // the alerts table is in the database
+            $snap['ledger'] = ['ok' => false, 'head' => 0, 'oldest' => 0, 'count_24h' => 0, 'recent' => []];
+            $snap['notify'] = ['sent_24h' => 0, 'rules' => []];   // the alerts table is in the database
         }
         $snap['collector'] = ['pid' => getmypid(), 'interval' => $interval, 'duration_ms' => (int) round((microtime(true) - $t0) * 1000)];
         cc_write_atomic("$run/state.json", (string) json_encode($snap, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG));
