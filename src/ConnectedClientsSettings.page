@@ -1,6 +1,7 @@
 Menu="Utilities"
 Title="Connected Clients"
 Icon="unraid-connections.png"
+Tag="unraid-connections.png"
 Markdown="false"
 ---
 <?php
